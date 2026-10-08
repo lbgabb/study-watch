@@ -14,8 +14,9 @@
 - **Windows 桌面工具**，Python 3.10+，唯一第三方依赖是 Pillow
 - **不绑定 DeepSeek**：走标准 OpenAI 兼容协议，任何支持图片输入的模型都能用（含本地 llama.cpp / LM Studio）
 - **按前台应用分配截图**：游戏不判定、短视频一切换就查、聊天每 10 分钟、阅读每 5 分钟……省调用也提准确率
-- **本地网页仪表盘**：时间轴、类别占比、近 7 天、分心明细，启停与全部设置都在这里改
+- **本地网页仪表盘**：时间轴可缩放与切换日期，启停与全部设置都在网页里改，不用手编配置文件
 - 截图默认**只在内存里**编码后发 API，不落盘
+- 一键部署脚本会自动检查环境、**缺依赖时自动装**（国内网络自动走镜像）、建好桌面快捷方式
 
 ![仪表盘](assets/dashboard-preview.png)
 
@@ -35,6 +36,8 @@
 - [已知边界](#已知边界)
 - [目录结构](#目录结构)
 - [开发笔记](#开发笔记)
+- [这个项目是怎么写出来的](#这个项目是怎么写出来的)
+- [License](#license)
 
 ---
 
@@ -43,21 +46,28 @@
 ### 一键部署（推荐）
 
 ```powershell
-git clone <你的仓库地址> study-watch
+git clone https://github.com/lbgabb/study-watch.git
 cd study-watch
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-`setup.ps1` 会依次：查 Windows → 找 Python → 检查 `PIL`/`tkinter`/`winsound` → 检查 API key → 缺图标就生成 → 建两个桌面快捷方式 → 跑一次**不花钱**的冒烟测试。
+`setup.ps1` 会依次：查 Windows → 找 Python → 检查 `PIL`/`tkinter`/`winsound` →
+**缺 Pillow 时自动安装**（默认源超时的话自动改走清华/阿里镜像）→ 检查 API key →
+缺图标就生成 → 建两个桌面快捷方式 → 跑一次**不花钱**的冒烟测试。
+
+看到 `=== 结果：N 项正常 / 0 项失败 ===` 就成了。
 
 ### 手动
 
 ```powershell
 python -m pip install -r requirements.txt          # 只有 Pillow
-$env:DEEPSEEK_API_KEY = "sk-xxxx"                  # 或者写进 ~/.dsh/.credentials.yaml
-python monitor.py --check-api                      # 先确认模型能用
+$env:DEEPSEEK_API_KEY = "sk-xxxx"                  # 或者在仪表盘「设置」里填
+python monitor.py --check-api                      # 先确认模型能用（用内置小图，不截屏）
 python monitor.py --minutes 25                     # 监督 25 分钟试试
 ```
+
+> 装了多个 Python、或想让工具固定用某一个：在项目根目录建 `py-path.txt`，
+> 第一行写解释器的完整路径即可（这个文件已在 `.gitignore` 里，不会进版本库）。
 
 ### 日常使用
 
@@ -75,6 +85,7 @@ python monitor.py --status       # 体检：进程、服务、配置是否生效
 python monitor.py --policy       # 看当前前台应用会命中哪条截图规则
 python monitor.py --check-api    # 用内置小图自检模型连通性（不截你的屏）
 python monitor.py --once         # 立刻判一次
+python monitor.py --stop         # 停止监督（按命令行识别进程，换机器也能停掉）
 python monitor.py --report --days 7
 python monitor.py --export       # 导出 Markdown 日报
 ```
@@ -247,8 +258,10 @@ python monitor.py --export       # 导出 Markdown 日报
   "api": {
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-flash",
-    "api_key_env": "DEEPSEEK_API_KEY",
-    "credentials_file": "~/.dsh/.credentials.yaml"
+    "api_key_env": "DEEPSEEK_API_KEY",       // 去这个环境变量里找 key
+    "credentials_file": "~/.study-watch/credentials.yaml"
+                                             // 没有环境变量时，从这个 yaml 里读
+                                             // 形如：DEEPSEEK_API_KEY: sk-xxxx
   },
   "judge": {
     "goal": "备考学习（课程视频、教材、网课、题库、编程/外语学习、写作业与笔记）",
@@ -329,7 +342,7 @@ python monitor.py --check-api
 ## 自测
 
 ```powershell
-.\selftest.bat        # 一键跑全部 13 项，最后给出汇总
+.\selftest.bat        # 一键跑全部 14 项，最后给出汇总
 ```
 
 | 测试 | 验证什么 |
@@ -359,14 +372,14 @@ python monitor.py --check-api
 | `tools/measure_capture.py` | 实测截屏各阶段耗时与体积 |
 | `tools/show_settings.py` | 打印当前生效的设置 |
 | `tools/net_*.py` | 网络诊断：延迟/丢包、真实下载吞吐、CDN 节点对比、可选清晰度 |
-| `tools/cdp_check.py` | 无头浏览器实测仪表盘交互（时间轴、设置抽屉、日期切换） |
+| `tools/cdp_check.py` | 无头浏览器实测仪表盘交互（时间轴、日期切换、提示是否被重绘冲掉） |
 | `tools/cdp_eval.py` | 在真实页面里执行 JS 并打印结果（前端排障用） |
+| `tools/hunt_flaky.py` | 反复跑自测直到复现偶发失败，并把上下文留档 |
 | `tools/repo_audit.py` | 发布前审计：扫描密钥、个人路径、不该提交的运行数据 |
 | `tools/pack_source.py` / `pack_friend.py` | 打包源码包 / 给朋友的运行包 |
 | `tools/make_github_upload.py` | 生成可直接拖到 GitHub 网页上传的目录 |
 | `tools/make_shortcut*.ps1` | 重建桌面快捷方式 |
 | `tools/fix_script_encoding.py` | 修正脚本编码（见下方开发笔记） |
-| `tools/prepublish_audit.py` | 发布前扫描密钥与硬编码路径 |
 
 ---
 
@@ -390,7 +403,7 @@ study-watch/
 ├─ monitor.py               入口（等价 python -m lib.monitor）
 ├─ config.json              配置（也可在仪表盘里改）
 ├─ setup.ps1                一键部署：查环境、建快捷方式、冒烟测试
-├─ selftest.ps1 / .bat      一键自测（13 项）
+├─ selftest.ps1 / .bat      一键自测（14 项）
 ├─ study-watch.cmd          桌面「学习监督」快捷方式的目标（纯 ASCII 外壳）
 ├─ dashboard.bat / .ps1     桌面「学习监督 仪表盘」快捷方式的目标
 ├─ start.ps1 / .bat         控制台模式运行
@@ -418,7 +431,7 @@ study-watch/
 ├─ web/
 │  ├─ index.html            仪表盘页面（深色主题，无外部依赖）
 │  └─ app.js                前端：时间轴 / 环形图 / 柱状图 / 明细 / 控制 / 设置
-├─ tests/                   13 项自测
+├─ tests/                   14 项自测
 └─ tools/                   排障与生成工具
 ```
 
@@ -447,6 +460,51 @@ study-watch/
 ### 启动要跨进程互斥
 
 "用户点开始"和"服务自愈"是两个独立进程，靠文件锁（`data/start.lock`）串行化，否则会起出两个监控进程——重复判定、重复扣费、提醒弹两次。`tests/test_cross_process_lock.py` 守这条。
+
+### 找 Python：要挑"能用"的那个
+
+一台机器上装两个 Python 很常见（系统一个、便携版一个）。只按路径排序会挑到**没装 Pillow 的那个**，
+工具直接跑不起来。所以 `Resolve-Python` 的顺序是：
+
+1. 项目根的 `py-path.txt`（用户显式指定，最高优先）
+2. 常见安装位置，**先用 `import PIL` 试一遍，优先挑能用的**，其次才比版本号
+3. PATH 里的 `python`
+
+另外脚本里**不要出现指向作者机器的路径**——那是换台机器就失效的隐形炸弹。
+
+### 缺依赖要能自己救回来
+
+`setup.ps1` 检查依赖时有个坑：`$ErrorActionPreference = 'Stop'` 会把子进程写到 stderr 的
+`ImportError` traceback 当成终止错误，脚本直接崩掉——**而这恰恰是新用户最常遇到的情况**。
+检查前要临时放宽成 `Continue`。
+
+真缺 Pillow 时自动安装，并且**默认源超时后自动换清华/阿里镜像**：国内直连 PyPI 经常卡死，
+这一步决定了新用户能不能顺利装上。
+
+### Git 换行符与 .ico
+
+Windows 上 `core.autocrlf = true` 很常见。项目根**必须有 `.gitattributes`** 明确声明：
+
+```
+*.cmd  text eol=crlf      # 批处理必须是 CRLF
+*.ico  binary             # 否则会被当文本做换行转换，图标直接损坏
+*.png  binary
+```
+
+自测办法：`git hash-object --path assets/study-watch.ico` 与 `--no-filters` 的结果必须一致
+（本项目实测 381038 字节逐字节相同）。
+
+### 前端改动要用真实浏览器验
+
+缩放、拖选这类交互**截图证明不了什么**（看不出"点了按钮之后状态对不对"）。而 Edge 新版无头的
+`--dump-dom` 不输出内容。解法是用 CDP（Chrome DevTools 协议）真的去点、去读 DOM：
+`tools/cdp_check.py` 就是为此写的，**纯标准库**实现了 WebSocket，不装任何包。
+它挂在自测第 8 项，改动前端后跑一次就知道有没有弄坏交互。
+
+### 校验提示会被自动重绘冲掉
+
+页面每 5 秒重绘一次。任何"直接写 DOM 就完事"的提示（比如输入非法时的警告）都会在 5 秒内消失，
+用户根本看不到。提示状态要存下来，让重绘时优先显示它。
 
 ---
 
