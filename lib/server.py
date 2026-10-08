@@ -30,6 +30,7 @@ if __package__ in (None, ""):  # 允许 python lib/server.py 直接运行
 from .config import ROOT, load_config  # noqa: E402
 from .config import CONFIG_PATH  # noqa: E402
 from . import proc, report, store, vision  # noqa: E402
+from . import plan  # noqa: E402
 
 WEB_DIR = ROOT / "web"
 DEFAULT_PORT = 8770
@@ -275,6 +276,68 @@ def _query_day(path: str) -> date | None:
     return None
 
 
+def _int_or_none(v: Any) -> int | None:
+    """把表单里可能是字符串/空值的数字转成 int；空值返回 None（= 用预设默认）。"""
+    if v is None or v == "":
+        return None
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _plan_action(action: str, body: dict) -> dict:
+    """专注计划（番茄钟）的开始 / 结束 / 跳过 / 清除。"""
+    if action == "start":
+        p = plan.start(
+            str(body.get("preset") or "pomodoro"),
+            target_rounds=_int_or_none(body.get("rounds")) or 0,
+            focus_min=_int_or_none(body.get("focus_min")),
+            break_min=_int_or_none(body.get("break_min")),
+            long_every=_int_or_none(body.get("long_every")),
+            long_break_min=_int_or_none(body.get("long_break_min")),
+            note=str(body.get("note") or "").strip()[:80],
+            remind_on_break=bool(body.get("remind_on_break")),
+            strict_break=bool(body.get("strict_break")),
+        )
+        msg = f"已开始：{p.phase_label()} {p.phase_sec // 60} 分钟"
+        if p.target_rounds:
+            msg += f"｜计划 {p.target_rounds} 轮"
+        return {"ok": True, "plan": plan.describe(p), "message": msg}
+
+    if action == "status":
+        p = plan.load()
+        if p is None:
+            return {"ok": True, "plan": {"active": False}, "message": "当前没有专注计划"}
+        return {"ok": True, "plan": plan.describe(p), "message": "当前计划"}
+
+    if action == "stop":
+        p = plan.load()
+        if p is None:
+            return {"ok": True, "plan": {"active": False}, "message": "当前没有进行中的计划"}
+        plan.stop(p, "手动结束")
+        return {"ok": True, "plan": plan.describe(p),
+                "message": f"已结束（完成 {p.done_focus_rounds()} 轮专注）"}
+
+    if action == "clear":
+        plan.clear()
+        return {"ok": True, "plan": {"active": False}, "message": "已清除计划记录"}
+
+    if action == "skip":
+        p = plan.load()
+        if p is None or p.finished:
+            return {"ok": False, "message": "当前没有进行中的计划"}
+        p = plan.advance(p, completed=False)
+        if p.finished:
+            return {"ok": True, "plan": plan.describe(p), "message": "计划已结束"}
+        return {"ok": True, "plan": plan.describe(p),
+                "message": f"已跳到{plan.PHASE_LABEL.get(p.phase, p.phase)}"
+                           f"（{p.phase_sec // 60} 分钟）"}
+
+    return {"ok": False, "message": f"未知操作：{action}"}
+
+
 def build_data(day: date | None = None) -> dict[str, Any]:
     """组装仪表盘数据。
 
@@ -358,6 +421,8 @@ def build_data(day: date | None = None) -> dict[str, Any]:
         "view_day": view_day.isoformat(),
         "is_today": view_day == today,
         "available_days": available,
+        "plan": plan.describe(plan.load()),
+        "plan_presets": plan.presets_for_ui(),
     }
 
 
@@ -747,6 +812,9 @@ class Handler(BaseHTTPRequestHandler):
             elif route == "/api/check-api":
                 body = self._read_json_body() or {}
                 self._json(test_api_config(body.get("edits"), body.get("api_key")))
+            elif route == "/api/plan":
+                body = self._read_json_body() or {}
+                self._json(_plan_action(str(body.get("action") or "start"), body))
             else:
                 self._json({"ok": False, "message": "未知接口"}, 404)
         except Exception as e:

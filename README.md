@@ -12,6 +12,7 @@
 ```
 
 - **Windows 桌面工具**，Python 3.10+，唯一第三方依赖是 Pillow
+- **番茄钟 / 专注计划**：内置几种常见节奏（25/5、90/20、52/17…），自动切换专注与休息，**休息时段的判定不计入专注率**
 - **不绑定 DeepSeek**：走标准 OpenAI 兼容协议，任何支持图片输入的模型都能用（含本地 llama.cpp / LM Studio）
 - **按前台应用分配截图**：游戏不判定、短视频一切换就查、聊天每 10 分钟、阅读每 5 分钟……省调用也提准确率
 - **本地网页仪表盘**：时间轴可缩放与切换日期，启停与全部设置都在网页里改，不用手编配置文件
@@ -25,6 +26,7 @@
 ## 目录
 
 - [快速开始](#快速开始)
+- [番茄钟 / 专注计划](#番茄钟--专注计划)
 - [截图策略：按前台应用分配](#截图策略按前台应用分配)
 - [可视化仪表盘](#可视化仪表盘)
 - [判断机制](#判断机制)
@@ -89,6 +91,58 @@ python monitor.py --stop         # 停止监督（按命令行识别进程，换
 python monitor.py --report --days 7
 python monitor.py --export       # 导出 Markdown 日报
 ```
+
+---
+
+## 番茄钟 / 专注计划
+
+仪表盘顶部的「专注计划」卡片，或命令行 `pomodoro.ps1`。它不只是个计时器——
+**计划状态会被写进每次判定记录**，所以事后能看出"这一轮专注质量如何"。
+
+### 内置节奏与各自的依据
+
+| 预设 | 节奏 | 依据（诚实版） |
+| --- | --- | --- |
+| 25 / 5 | 专注 25 分、休息 5 分，每 4 轮长休 20 分 | Cirillo 的实践总结，把任务切到"足以立刻开始"的大小。**不是实验结论** |
+| 90 / 20 | 专注 90 分、休息 20 分 | Kleitman 的 BRAC：清醒时警觉度约 90 分钟一个周期。观察性证据支持这个量级，个体差异很大 |
+| 52 / 17 | 专注 52 分、休息 17 分 | DeskTime 2014 年对用户数据的观察性统计。不是对照实验，有"自愿上报"偏差 |
+| 15 / 3 | 专注 15 分、休息 3 分 | 状态差、任务难启动时的短冲刺。先用最小代价进入状态 |
+| 自定义 | 自己填 | —— |
+
+比具体数字更可靠的是三条共同点：**连续专注有上限；休息要真的离开任务；把时长固定下来能省掉每次"要不要休息"的决策消耗。**
+所以挑一个你能坚持的，比挑一个"最科学"的重要。
+
+### 一个刻意的设计：休息不算进专注率
+
+休息时段的判定会被标记为 `exclude_from_stats`，**不计入专注率与类别占比**，而是单独记成"休息时长"。
+
+理由很实际：如果老实休息反而让数据变难看，你下次就不敢休息了——那就本末倒置。
+实测对照（休息时刷了 5 分钟手机）：
+
+```
+把休息计入统计：专注率 44.4%
+排除休息时段　：专注率 100.0%   休息单独记 300s
+```
+
+同理，**休息时默认不弹"你分心了"**（可在卡片上勾选打开）。休息就该离开屏幕，
+这时候提醒只会让人不敢休息。
+
+### 操作
+
+仪表盘上：选节奏 →（可选）填轮数与主题 → 开始。运行中显示圆环倒计时、轮次进度点，
+可以「提前休息」「休息够了，继续」「结束计划」。
+
+```powershell
+.\start-25min.bat                                  # 25/5 开一轮
+powershell -File .\pomodoro.ps1 -Rounds 4 -Note "高数第三章"
+powershell -File .\pomodoro.ps1 -Preset ultradian  # 90/20
+powershell -File .\pomodoro.ps1 -Focus 50 -Break 10
+powershell -File .\pomodoro.ps1 -Status
+powershell -File .\pomodoro.ps1 -Stop
+```
+
+计划存在 `data/plan.json`，**重启监督会接着算**，不会从头开始。
+`rounds` 填 0 表示不限轮数，做到你手动停。
 
 ---
 
@@ -342,7 +396,7 @@ python monitor.py --check-api
 ## 自测
 
 ```powershell
-.\selftest.bat        # 一键跑全部 14 项，最后给出汇总
+.\selftest.bat        # 一键跑全部 16 项，最后给出汇总
 ```
 
 | 测试 | 验证什么 |
@@ -359,8 +413,17 @@ python monitor.py --check-api
 | `tests/test_intent.py` | 用户意图：点过停止之后，反复刷新状态也不会把监控偷偷拉起来 |
 | `tests/test_readonly_status.py` | 状态接口只读性：连打 40 次轮询，进程数/标记/state.json 零变化 |
 | `tests/test_cross_process_lock.py` | 跨进程启动互斥：多个独立进程并发启动只起一个监控 |
+| `tests/test_plan.py` | 番茄钟：阶段推进、长休规则、轮次上限、跨重启续上，以及**休息不计入专注率**；界面部分用无头浏览器实点 |
 | `tools/cdp_check.py` | **仪表盘界面交互**（无头 Edge + CDP 实测）：时间轴预设/自定义区间/拖选缩放、提示不被自动重绘冲掉、日期切换与历史标注 |
 | `monitor.py --dry-run` | 截图与前台窗口采集链路是否正常（不调用 API、不花钱） |
+
+`tests/test_plan_loop.py` 是**耗时的联动实测**（约 3 分钟，要真的等过一个阶段），
+所以没放进一键自测：它起一个 1 分钟一轮的计划和后台监控，验证监控进程会自己推进阶段、
+把切换写进日志、并给休息时段的记录打上"不计入统计"的标记。改了番茄钟与监控循环的接口后值得跑一次：
+
+```powershell
+python tests\test_plan_loop.py
+```
 
 另外 `tools/` 下有排障与生成工具：
 
@@ -403,11 +466,12 @@ study-watch/
 ├─ monitor.py               入口（等价 python -m lib.monitor）
 ├─ config.json              配置（也可在仪表盘里改）
 ├─ setup.ps1                一键部署：查环境、建快捷方式、冒烟测试
-├─ selftest.ps1 / .bat      一键自测（14 项）
+├─ selftest.ps1 / .bat      一键自测（16 项）
 ├─ study-watch.cmd          桌面「学习监督」快捷方式的目标（纯 ASCII 外壳）
 ├─ dashboard.bat / .ps1     桌面「学习监督 仪表盘」快捷方式的目标
 ├─ start.ps1 / .bat         控制台模式运行
-├─ start-25min.bat          番茄钟模式（25 分钟后自动结束并出日报）
+├─ pomodoro.ps1             番茄钟命令行入口（预设/自定义/状态/停止）
+├─ start-25min.bat          双击开一轮 25/5，结束后自动出日报
 ├─ report.bat / stop.bat    看日报 / 结束后台监督
 ├─ requirements.txt         只有 Pillow
 ├─ LICENSE                  MIT
@@ -420,6 +484,7 @@ study-watch/
 │  ├─ config.py             配置加载与合并
 │  ├─ vision.py             截图编码、调用模型、JSON 解析与修补、key 解析
 │  ├─ policy.py             截图策略：按前台应用决定这一轮要不要截图
+│  ├─ plan.py               番茄钟状态机（阶段推进 / 长休规则 / 跨重启续上）
 │  ├─ winapi.py             前台窗口 / 空闲 / 锁屏 / DPI（纯 ctypes）
 │  ├─ proc.py               进程命令行查询（纯 ctypes 读 PEB）
 │  ├─ notify.py             置顶提醒窗 + 提示音 + 系统通知回退
@@ -431,7 +496,7 @@ study-watch/
 ├─ web/
 │  ├─ index.html            仪表盘页面（深色主题，无外部依赖）
 │  └─ app.js                前端：时间轴 / 环形图 / 柱状图 / 明细 / 控制 / 设置
-├─ tests/                   14 项自测
+├─ tests/                   16 项自测
 └─ tools/                   排障与生成工具
 ```
 
@@ -447,7 +512,15 @@ study-watch/
 - **`.cmd` / `.bat` 必须不能有 BOM**：cmd.exe 在 `chcp` 之前就按 ANSI 读文件，行首 BOM 会让 `@echo off` 失效
 - **批处理里不要写中文**：中文字节里可能含 `0x5C`（反斜杠），cmd 会把它当转义而报错。UI 文案一律交给 `.ps1`
 
-改完跑一次 `python tools/fix_script_encoding.py` 自动修正。
+**这个坑踩过两次**：用普通文本编辑工具（或脚本里的 `write_text(encoding="utf-8")`）改 `.ps1` 时，
+BOM 会被悄悄丢掉，下次运行时 PowerShell 直接语法报错，而报错信息是一堆看不懂的乱码。
+所以 `python tools/fix_script_encoding.py` 加了 `--check` 模式，并且**作为自测的第一项**——
+改完不用记得跑，跑自测就会告诉你。修正：
+
+```powershell
+python tools\fix_script_encoding.py          # 自动修正
+python tools\fix_script_encoding.py --check  # 只检查（有问题返回 1）
+```
 
 ### 图标
 
@@ -511,7 +584,7 @@ Windows 上 `core.autocrlf = true` 很常见。项目根**必须有 `.gitattribu
 ## 这个项目是怎么写出来的
 
 代码由作者与 AI 编程助手（Claude / DeepSeek Harness）结对完成：需求、取舍、验收由作者把关，
-具体实现、调试与测试大量借助 AI 完成。测试套件（14 项，含无头浏览器实测仪表盘交互）
+具体实现、调试与测试大量借助 AI 完成。测试套件（16 项，含无头浏览器实测仪表盘交互）
 是这套流程能站得住脚的主要原因——它挡下过不少"看起来对、实际有问题"的改动。
 
 细节与踩坑记录见上面的[开发笔记](#开发笔记)。

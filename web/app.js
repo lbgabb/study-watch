@@ -1132,6 +1132,247 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeDrawer();
 });
 
+// ---------- 专注计划（番茄钟）----------
+// 倒计时在本地按绝对时间戳算，每秒只更新数字与圆环；不重建卡片，
+// 否则正在填的输入框会失焦、按钮会跳。
+let pomoData = null;        // 服务端给的 plan 描述
+let pomoPresets = [];       // 预设列表
+let pomoSetup = { preset: 'pomodoro', rounds: 0, note: '', remind_on_break: false, strict_break: false };
+let pomoBusy = false;
+
+function fmtCountdown(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+function pomoMsg(text, color) {
+  const box = document.getElementById('ctlMsg');
+  if (box) { box.textContent = text || ''; box.style.color = color || 'var(--dim)'; }
+}
+
+function renderPomo(d) {
+  if (d) {
+    pomoData = d.plan || { active: false };
+    if (Array.isArray(d.plan_presets) && d.plan_presets.length) pomoPresets = d.plan_presets;
+  }
+  const host = document.getElementById('pomo');
+  const tag = document.getElementById('pomoTag');
+  if (!host) return;
+  host.innerHTML = '';
+
+  const p = pomoData || { active: false };
+  const wrap = el('div', 'pomo' + (p.active && p.is_break ? ' rest' : ''));
+
+  if (p.active) {
+    // ---- 运行中：圆环倒计时 ----
+    const total = Math.max(1, p.phase_sec);
+    const remain = Math.max(0, p.phase_ends_at - Date.now() / 1000);
+    const ratio = Math.max(0, Math.min(1, remain / total));
+    const R = 50, C = 2 * Math.PI * R;
+
+    const ring = el('div', 'ring');
+    const svg = svgEl('svg', { width: 118, height: 118, viewBox: '0 0 118 118' });
+    svg.appendChild(svgEl('circle', {
+      cx: 59, cy: 59, r: R, fill: 'none', stroke: '#22303f', 'stroke-width': 9 }));
+    svg.appendChild(svgEl('circle', {
+      cx: 59, cy: 59, r: R, fill: 'none',
+      stroke: p.is_break ? '#4cc97a' : '#ffd166',
+      'stroke-width': 9, 'stroke-linecap': 'round',
+      'stroke-dasharray': C, 'stroke-dashoffset': C * (1 - ratio),
+      transform: 'rotate(-90 59 59)' }));
+    ring.appendChild(svg);
+    const box = el('div', 'txt');
+    const big = el('div', 'big', fmtCountdown(remain));
+    big.id = 'pomoClock';
+    box.appendChild(big);
+    box.appendChild(el('div', 'sub', p.is_break ? '休息中' : '专注中'));
+    ring.appendChild(box);
+    wrap.appendChild(ring);
+
+    const info = el('div', 'info');
+    const ph = el('div', 'phase', p.phase_label);
+    ph.appendChild(el('span', 'rd',
+      (p.target_rounds ? `第 ${p.round} / ${p.target_rounds} 轮` : `第 ${p.round} 轮`)
+      + `｜${p.focus_min} 分专注 / ${p.break_min} 分休息`));
+    info.appendChild(ph);
+    if (p.note) info.appendChild(el('div', 'goal', '主题：' + p.note));
+
+    const chain = el('div', 'chain');
+    const shown = Math.max(p.target_rounds || 0, p.round, 1);
+    for (let i = 1; i <= Math.min(shown, 16); i++) {
+      const dot = el('i');
+      if (i < p.round) dot.className = 'done';
+      else if (i === p.round) dot.className = p.is_break ? 'rest' : 'now';
+      chain.appendChild(dot);
+    }
+    const doneTxt = `已完成 ${p.done_focus_rounds} 轮专注`
+      + (p.rounds_total_sec ? `（${fmtDur(p.rounds_total_sec)}）` : '');
+    chain.appendChild(el('span', 'sub', doneTxt));
+    info.appendChild(chain);
+
+    const acts = el('div', 'acts');
+    const bSkip = el('button', null, p.is_break ? '休息够了，继续' : '提前休息');
+    bSkip.onclick = () => pomoAction({ action: 'skip' });
+    bSkip.disabled = pomoBusy;
+    acts.appendChild(bSkip);
+    const bStop = el('button', 'danger', '结束计划');
+    bStop.onclick = () => pomoAction({ action: 'stop' });
+    bStop.disabled = pomoBusy;
+    acts.appendChild(bStop);
+    info.appendChild(acts);
+
+    if (p.basis) info.appendChild(el('div', 'basis', '节奏依据：' + p.basis));
+    wrap.appendChild(info);
+    if (tag) tag.textContent = `${p.preset_label}｜${p.phase_label}`;
+  } else {
+    // ---- 未开始 / 上次已结束：设置表单 ----
+    const setup = el('div', 'setup');
+    const presets = el('div', 'presets');
+    for (const pr of pomoPresets) {
+      const b = el('button', pomoSetup.preset === pr.key ? 'on' : null, pr.label);
+      b.title = pr.basis || '';
+      b.onclick = () => {
+        pomoSetup.preset = pr.key;
+        if (pr.key !== 'custom') {
+          pomoSetup.focus_min = pr.focus_min;
+          pomoSetup.break_min = pr.break_min;
+          pomoSetup.long_every = pr.long_every;
+          pomoSetup.long_break_min = pr.long_break_min;
+        }
+        renderPomo(null);
+      };
+      presets.appendChild(b);
+    }
+    setup.appendChild(presets);
+
+    const cur = pomoPresets.find(x => x.key === pomoSetup.preset) || pomoPresets[0] || {};
+    if (pomoSetup.focus_min === undefined) {
+      pomoSetup.focus_min = cur.focus_min || 25;
+      pomoSetup.break_min = cur.break_min || 5;
+      pomoSetup.long_every = cur.long_every || 0;
+      pomoSetup.long_break_min = cur.long_break_min || 0;
+    }
+
+    const row1 = el('div', 'row');
+    const mkNum = (label, key) => {
+      row1.appendChild(el('span', null, label));
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.min = 0;
+      inp.value = pomoSetup[key];
+      inp.onchange = () => {
+        pomoSetup[key] = Math.max(0, Number(inp.value) || 0);
+        pomoSetup.preset = 'custom';
+        renderPomo(null);
+      };
+      row1.appendChild(inp);
+    };
+    mkNum('专注', 'focus_min');
+    mkNum('分钟／休息', 'break_min');
+    mkNum('分钟｜每', 'long_every');
+    mkNum('轮长休', 'long_break_min');
+    row1.appendChild(el('span', null, '分钟'));
+    setup.appendChild(row1);
+
+    const row2 = el('div', 'row');
+    row2.appendChild(el('span', null, '做几轮'));
+    const rInp = document.createElement('input');
+    rInp.type = 'number'; rInp.min = 0; rInp.value = pomoSetup.rounds || 0;
+    rInp.title = '0 表示不限轮数，做到你手动停';
+    rInp.onchange = () => { pomoSetup.rounds = Math.max(0, Number(rInp.value) || 0); };
+    row2.appendChild(rInp);
+    row2.appendChild(el('span', null, '（0 = 不限）｜主题'));
+    const nInp = document.createElement('input');
+    nInp.type = 'text';
+    nInp.placeholder = '比如：高数第三章习题';
+    nInp.value = pomoSetup.note || '';
+    nInp.oninput = () => { pomoSetup.note = nInp.value; };
+    row2.appendChild(nInp);
+    setup.appendChild(row2);
+
+    const row3 = el('div', 'row');
+    const mkSw = (label, key, title) => {
+      const lab = el('label', 'sw2');
+      const inp = document.createElement('input');
+      inp.type = 'checkbox';
+      inp.checked = !!pomoSetup[key];
+      inp.onchange = () => { pomoSetup[key] = inp.checked; };
+      lab.appendChild(inp);
+      lab.appendChild(el('span', null, label));
+      lab.title = title || '';
+      row3.appendChild(lab);
+    };
+    mkSw('休息时也提醒分心', 'remind_on_break',
+      '默认关：休息就该离开屏幕，这时候弹提醒反而让人不敢休息');
+    mkSw('把休息计入统计', 'strict_break',
+      '默认关：休息时的判定不计入专注率，避免"老实休息反而数据难看"');
+    setup.appendChild(row3);
+
+    const acts = el('div', 'acts');
+    const bStart = el('button', 'primary', '开始专注');
+    bStart.onclick = () => pomoAction(Object.assign({ action: 'start' }, pomoSetup));
+    bStart.disabled = pomoBusy;
+    acts.appendChild(bStart);
+    if (p.finished) {
+      const bClear = el('button', null, '清除上次记录');
+      bClear.onclick = () => pomoAction({ action: 'clear' });
+      acts.appendChild(bClear);
+    }
+    setup.appendChild(acts);
+
+    if (p.finished && p.stop_reason) {
+      setup.appendChild(el('div', 'basis',
+        `上一次：${p.preset_label || ''}｜完成 ${p.done_focus_rounds || 0} 轮专注｜${p.stop_reason}`));
+    } else if (cur.basis) {
+      setup.appendChild(el('div', 'basis', '节奏依据：' + cur.basis));
+    }
+    wrap.appendChild(setup);
+    if (tag) tag.textContent = p.finished ? '上次已结束' : '';
+  }
+
+  host.appendChild(wrap);
+}
+
+async function pomoAction(body) {
+  pomoBusy = true;
+  try {
+    const r = await api('/api/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.plan) pomoData = r.plan;
+    pomoMsg(r.message || (r.ok ? '完成' : '失败'), r.ok === false ? '#f2a65a' : '#4cc97a');
+    renderPomo(null);
+    refresh();
+  } catch (e) {
+    pomoMsg('操作失败：' + e.message, '#f2a65a');
+  } finally {
+    pomoBusy = false;
+  }
+}
+
+// 每秒只改数字与圆环进度
+function tickPomo() {
+  const p = pomoData;
+  if (!p || !p.active) return;
+  const remain = Math.max(0, p.phase_ends_at - Date.now() / 1000);
+  const clock = document.getElementById('pomoClock');
+  if (clock) clock.textContent = fmtCountdown(remain);
+  const arc = document.querySelector('#pomo .ring svg circle[stroke-dasharray]');
+  if (arc) {
+    const C = 2 * Math.PI * 50;
+    const total = Math.max(1, p.phase_sec);
+    arc.setAttribute('stroke-dashoffset', C * (1 - Math.max(0, Math.min(1, remain / total))));
+  }
+  // 到点了：先本地收起，再让下一次轮询取回新阶段
+  if (remain <= 0 && !pomoBusy) {
+    p.active = false;
+    refresh();
+  }
+}
+
 // ---------- 主循环 ----------
 let timer = null;
 let offlineNotified = false;
@@ -1196,6 +1437,7 @@ async function refresh() {
     renderMeta(d);
     renderRecent(d);
     renderControl(d);
+    renderPomo(d);
     // 必须放在 renderCards 之后：它每次都会重建卡片，把"现在"这个标题覆盖回去
     tlApplyDateLabels(d);
   } catch (e) {
@@ -1233,6 +1475,8 @@ document.getElementById('offFollow').onchange = () => renderTimeline(null);
 
 refresh();
 timer = setInterval(refresh, 5000);
+// 倒计时单独每秒走：5 秒轮询会让秒数一跳一跳
+setInterval(tickPomo, 1000);
 
 // 支持用 #settings 直接打开设置（方便收藏成"设置页"）
 if (location.hash === '#settings' || location.search.indexOf('settings=1') >= 0) {

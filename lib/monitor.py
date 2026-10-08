@@ -26,6 +26,7 @@ if __package__ in (None, ""):  # 允许 python monitor.py 直接运行
     __package__ = "lib"
 
 from . import policy, proc, report, state as state_mod, store, vision, winapi  # noqa: E402
+from . import plan as plan_mod  # noqa: E402
 from .config import ROOT, load_config  # noqa: E402
 from .config import CONFIG_PATH  # noqa: E402
 from .notify import Notifier  # noqa: E402
@@ -121,9 +122,43 @@ def do_check(cfg: dict, api_key: str, notifier: Notifier | None, dry: bool) -> d
     need = int(cfg.get("reminder", {}).get("off_task_streak_required", 1) or 1)
     rec["reminded"] = False
     if notifier is not None and not verdict["on_task"] and need <= 1:
-        notifier.notify(verdict, goal=cfg["judge"].get("goal", ""))
-        rec["reminded"] = True
+        # 番茄钟的休息时段默认不提醒：休息就该离开屏幕，
+        # 这时候弹"你分心了"只会让人干脆不休息（可在计划里打开 remind_on_break）
+        p = plan_mod.load()
+        in_break = bool(p is not None and not p.finished and p.is_break)
+        if not (in_break and not p.remind_on_break):
+            notifier.notify(verdict, goal=cfg["judge"].get("goal", ""))
+            rec["reminded"] = True
     return rec
+
+
+def _notify_phase(notifier: Notifier | None, title: str, body: str, cfg: dict) -> None:
+    """阶段切换 / 计划完成的通知。
+
+    优先用同一个置顶提醒窗（带按钮，用户能确认），失败再退回系统通知。
+    这里的 verdict 是"合成"的：只借窗口的展示能力，不代表一次分心判定。
+    """
+    fake = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "activity": body.split("\n")[0],
+        "basis": body.replace("\n", "　"),
+        "category": title,
+        "on_task": True,
+        "confidence": 0,
+        "cost_usd": 0,
+        "process": "",
+    }
+    try:
+        if notifier is not None and not notifier.muted:
+            notifier.notify(fake, goal=cfg.get("judge", {}).get("goal", ""))
+            return
+    except Exception:
+        pass
+    try:
+        from .notify import _toast
+        _toast(title, body.replace("\n", " "))
+    except Exception:
+        pass
 
 
 def _maybe_streak_remind(cfg: dict, notifier: Notifier | None, rec: dict) -> None:
@@ -238,6 +273,9 @@ def run(cfg: dict, minutes: float | None, dry: bool, background: bool) -> int:
     except (ValueError, OSError):
         pass
 
+    plan_last_phase: str | None = None
+    plan_announced: set[str] = set()
+
     while not stopping:
         try:
             if deadline and time.time() >= deadline:
@@ -252,6 +290,39 @@ def run(cfg: dict, minutes: float | None, dry: bool, background: bool) -> int:
                 log(f"配置读取失败，沿用上一份配置：{e}")
             if notifier is not None:
                 notifier.cfg = cfg
+
+            # ---- 番茄钟 / 专注计划：到点就推进阶段 ----
+            plan = plan_mod.load()
+            if plan is not None and not plan.finished:
+                now_ts = time.time()
+                if now_ts >= plan.phase_ends_at:
+                    was = plan.phase_label()
+                    plan = plan_mod.advance(plan, now=now_ts)
+                    if plan.finished:
+                        log(f"专注计划完成：共 {plan.done_focus_rounds()} 轮专注")
+                        _notify_phase(notifier, "计划完成",
+                                      f"共完成 {plan.done_focus_rounds()} 轮专注，"
+                                      f"辛苦了。要再来一轮就在仪表盘上点开始。", cfg)
+                    else:
+                        log(f"{was}结束 -> 进入{plan.phase_label()}"
+                            f"（第 {plan.round} 轮，{plan.phase_sec // 60} 分钟）")
+                        _notify_phase(
+                            notifier,
+                            f"{was}结束",
+                            (f"去休息 {plan.phase_sec // 60} 分钟，起来走动、看远处。\n"
+                             f"休息时不会提醒你分心。"
+                             if plan.is_break else
+                             f"开始第 {plan.round} 轮专注，{plan.phase_sec // 60} 分钟。"),
+                            cfg)
+                # 阶段切换的即时播报（含刚开始的那一轮）
+                if plan.phase != plan_last_phase:
+                    plan_last_phase = plan.phase
+                    if plan.phase_label() not in plan_announced or plan.round not in plan_announced:
+                        log(f"专注计划：{plan.phase_label()}｜第 {plan.round} 轮"
+                            f"｜剩 {plan.remaining_sec() // 60} 分钟"
+                            + (f"｜主题：{plan.note}" if plan.note else ""))
+                        plan_announced.add(plan.phase_label())
+                        plan_announced.add(plan.round)
 
             ctx = winapi.foreground_window()
             own_pid = winapi.own_pid()
@@ -292,6 +363,15 @@ def run(cfg: dict, minutes: float | None, dry: bool, background: bool) -> int:
                     if decision["reason"] not in ("全局间隔到期",):
                         rec["policy_reason"] = decision["reason"]
                         rec["policy_rule"] = decision["rule"]
+                    # 把当前处于计划的哪个阶段写进记录：
+                    # 休息时的判定不计入专注率，否则好好休息反而拉低统计
+                    plan_now = plan_mod.load()
+                    phase, plan_extra = plan_mod.phase_for(plan_now)
+                    if phase:
+                        rec["plan_phase"] = phase
+                        rec.update(plan_extra)
+                        if plan_now is not None and plan_now.is_break and not plan_now.strict_break:
+                            rec["exclude_from_stats"] = True
                     if rec.get("status") != "dry_run":
                         store.append(cfg, rec)
                     st_now = datetime.now()
@@ -311,18 +391,35 @@ def run(cfg: dict, minutes: float | None, dry: bool, background: bool) -> int:
                         history.append(rec)
                         if not rec.get("on_task"):
                             counts["off"] += 1
-                            _maybe_streak_remind(cfg, notifier, rec)
+                            # 计划的休息时段不打扰：休息本来就该离开屏幕，
+                            # 这时候弹"你分心了"只会让人干脆不休息
+                            in_break = bool(rec.get("plan_phase") in ("break", "long_break"))
+                            allow = True
+                            if in_break:
+                                p_now = plan_mod.load()
+                                allow = bool(p_now and p_now.remind_on_break)
+                            if allow and not rec.get("exclude_from_stats"):
+                                _maybe_streak_remind(cfg, notifier, rec)
                     elif stl == "error":
                         counts["error"] += 1
                     else:
                         counts["skip"] += 1
 
+            # 睡眠期间要能及时响应：暂停/停止、阶段切换（专注→休息）、提醒窗事件
             sleep_left = cfg["interval_sec"]
             while sleep_left > 0 and not stopping:
                 if notifier is not None:
                     notifier.pump()
                 if deadline and time.time() >= deadline:
                     break
+                # 阶段剩余时间比 interval 短时，只睡到阶段结束，好让切换及时发生
+                p = plan_mod.load()
+                if p is not None and not p.finished:
+                    left = p.remaining_sec()
+                    if 0 < left < sleep_left:
+                        sleep_left = left
+                    if left <= 0:
+                        break
                 step = 0.4 if notifier is not None else 0.5
                 time.sleep(min(step, sleep_left))
                 sleep_left -= step

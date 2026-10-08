@@ -6,6 +6,13 @@
 - .cmd/.bat **必须不要** BOM：cmd.exe 在解析 chcp 之前就按 ANSI 读文件，
         行首的 BOM 字节会让第一行 "@echo off" 失效（乱码被当命令执行）。
         所以批处理里不宜放中文，UI 文案交给 PowerShell。
+
+用法：
+    python tools/fix_script_encoding.py           # 修正
+    python tools/fix_script_encoding.py --check   # 只检查，有问题就返回非 0
+
+--check 用在自测里：这个坑踩过两次（都是用脚本改文件时把 BOM 写掉了），
+所以让流水线自己报错，而不是靠人记得跑一次修正。
 """
 import sys
 from pathlib import Path
@@ -15,6 +22,7 @@ BOM = b"\xef\xbb\xbf"
 
 
 def main() -> int:
+    check_only = "--check" in sys.argv[1:]
     ps1, bat = [], []
     for p in sorted(ROOT.rglob("*")):
         if not p.is_file():
@@ -32,12 +40,32 @@ def main() -> int:
 
         if suffix == ".ps1":
             if not has_bom:
-                p.write_bytes(BOM + text.encode("utf-8"))
-                ps1.append(p.relative_to(ROOT))
+                if check_only:
+                    ps1.append(p.relative_to(ROOT))
+                else:
+                    p.write_bytes(BOM + text.encode("utf-8"))
+                    ps1.append(p.relative_to(ROOT))
         else:
             if has_bom:
-                p.write_bytes(text.encode("utf-8"))
-                bat.append(p.relative_to(ROOT))
+                if check_only:
+                    bat.append(p.relative_to(ROOT))
+                else:
+                    p.write_bytes(text.encode("utf-8"))
+                    bat.append(p.relative_to(ROOT))
+
+    if check_only:
+        bad = 0
+        for r in ps1:
+            print(f"  [失败] {r} 缺少 BOM —— PowerShell 5.1 会把中文按 GBK 解码而报错")
+            bad += 1
+        for r in bat:
+            print(f"  [失败] {r} 有多余 BOM —— cmd.exe 会让首行 @echo off 失效")
+            bad += 1
+        if not bad:
+            print("  [通过] 所有 .ps1 都带 BOM，所有 .cmd/.bat 都没有 BOM")
+            return 0
+        print(f"\n  {bad} 个文件编码不对，跑一次 python tools/fix_script_encoding.py 修正")
+        return 1
 
     for r in ps1:
         print(f"[.ps1 加 BOM ] {r}")

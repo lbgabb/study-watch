@@ -28,10 +28,16 @@ def _load_sec(rec: dict) -> float:
 
 
 def aggregate(records: list[dict]) -> dict[str, Any]:
-    """把一天的记录按下一次判定的间隔折算成时长。"""
-    ok = [r for r in records if r.get("status") == "ok"]
+    """把一天的记录按下一次判定的间隔折算成时长。
+
+    番茄钟休息时段的记录（exclude_from_stats）单独归到 break_sec，不计入
+    专注率与类别占比——否则老老实实休息反而把数据拉低，那就本末倒置了。
+    """
+    all_ok = [r for r in records if r.get("status") == "ok"]
     err = [r for r in records if r.get("status") == "error"]
     skipped = [r for r in records if str(r.get("status", "")).startswith(("idle", "own", "locked"))]
+    break_sec = sum(float(r.get("sec") or 0) for r in all_ok if r.get("exclude_from_stats"))
+    ok = [r for r in all_ok if not r.get("exclude_from_stats")]
 
     cat_sec: dict[str, float] = {}
     proc_sec: dict[str, float] = {}
@@ -84,6 +90,8 @@ def aggregate(records: list[dict]) -> dict[str, Any]:
         "checks": len(ok),
         "errors": len(err),
         "skipped": len(skipped),
+        "break_sec": break_sec,
+        "break_checks": len(all_ok) - len(ok),
         "span_sec": span,
         "on_task_sec": on_task_sec,
         "off_task_sec": off_task_sec,

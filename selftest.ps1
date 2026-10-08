@@ -14,6 +14,7 @@ $python = Get-PythonPath
 if (-not $python) { Write-Host "未找到 Python。" -ForegroundColor Red; exit 2 }
 
 $steps = @(
+    @{ Name = '脚本编码（.ps1 带 BOM / .bat 不带）'; Script = 'tools\fix_script_encoding.py --check' },
     @{ Name = 'JSON 解析健壮性（畸形输出修补）'; Script = 'tests\test_json_repair.py' },
     @{ Name = '服务商兼容性（降级链与报错提示）';  Script = 'tests\test_provider_compat.py' },
     @{ Name = '截图策略（按前台应用分配截图）';   Script = 'tests\test_policy.py' },
@@ -22,6 +23,7 @@ $steps = @(
     @{ Name = '仪表盘 API 与启停控制';          Script = 'tests\test_server.py' },
     @{ Name = '设置读写（校验/白名单/还原）';    Script = 'tests\test_config_api.py' },
     @{ Name = '仪表盘界面交互（无头浏览器实测）'; Script = 'tools\cdp_check.py http://127.0.0.1:8770/' },
+    @{ Name = '番茄钟（状态机 + 界面实测）';      Script = 'tests\test_plan.py' },
     @{ Name = '控制面板流程（开/暂停/恢复/停）'; Script = 'tests\control_flow.py' },
     @{ Name = '服务韧性（监控被杀后自动拉起）';  Script = 'tests\test_recovery.py --port 0' },
     @{ Name = '用户意图（停止后不被刷新拉起）';  Script = 'tests\test_intent.py --port 0' },
