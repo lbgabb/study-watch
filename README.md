@@ -376,7 +376,9 @@ python monitor.py --check-api
 - **全屏独占的游戏**可能截不到内容，会落到"闲置/其他"
 - **判定会误判**：觉得太严就用 `strictness: "loose"`，或把 `off_task_streak_required` 改成 2；觉得太松就 `strict` 并加 `extra_rules`
 - 它只提醒，**不锁屏、不阻止你打开任何程序**
-- 换机器可用（无硬编码路径），但需要装 Python 3.10+ 与 Pillow；`tools/*.ps1` 顶部的 Python 候选路径第一项指向作者环境，有 `python` 在 PATH 就无所谓
+- 换机器可用（无硬编码路径），但需要装 Python 3.10+ 与 Pillow。脚本找 Python 的顺序是：
+  项目根目录的 `py-path.txt`（自建，已 gitignore）→ 常见安装位置（**优先挑已装 Pillow 的那个**）→ PATH。
+  一台机器上装了两个 Python 时，没依赖的那个会被自动跳过
 - 想跨平台需要重写 `lib/winapi.py`（窗口/空闲/锁屏/DPI）、`lib/notify.py`（提醒窗）、以及 `vision.py` 里的抓屏方式；策略层、数据层、模型层、界面都是平台无关的
 
 ---
@@ -447,6 +449,14 @@ study-watch/
 "用户点开始"和"服务自愈"是两个独立进程，靠文件锁（`data/start.lock`）串行化，否则会起出两个监控进程——重复判定、重复扣费、提醒弹两次。`tests/test_cross_process_lock.py` 守这条。
 
 ---
+
+## 这个项目是怎么写出来的
+
+代码由作者与 AI 编程助手（Claude / DeepSeek Harness）结对完成：需求、取舍、验收由作者把关，
+具体实现、调试与测试大量借助 AI 完成。测试套件（14 项，含无头浏览器实测仪表盘交互）
+是这套流程能站得住脚的主要原因——它挡下过不少"看起来对、实际有问题"的改动。
+
+细节与踩坑记录见上面的[开发笔记](#开发笔记)。
 
 ## License
 
