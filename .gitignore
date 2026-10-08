@@ -1,0 +1,29 @@
+﻿# 运行数据：日志、判定记录、原始回复、截图、状态、凭据 —— 一律不进仓库
+data/
+
+# 本机凭据（面板里填的 API key 会写到这里）
+secrets.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
+# 测试与工具的临时产物
+*.tmp
+*.bak
+*.testbak
+_*.png
+
+# 本机的 Python 解释器路径（不随仓库走）
+py-path.txt

@@ -71,6 +71,26 @@
   svg{display:block; width:100%; height:auto; overflow:visible}
   /* 时间轴高度固定；宽度由 JS 按容器实际像素宽设 viewBox，保证坐标 = 真实像素 */
   #timeline svg{height:118px}
+  /* 时间轴工具条：预设区间 / 自定义时间 / 提示 */
+  .tlbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:2px 0 10px}
+  .tlbar .spacer{flex:1}
+  .tlseg{display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden}
+  .tlseg button{border:none; border-radius:0; background:transparent; color:var(--dim);
+                padding:5px 11px; font-size:12.5px}
+  .tlseg button + button{border-left:1px solid var(--line)}
+  .tlseg button:hover{background:#1c2836; color:var(--ink)}
+  .tlseg button.on{background:#24384f; color:var(--ink)}
+  .tlrange{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--faint)}
+  .tlrange input[type=time]{background:#111a25; border:1px solid var(--line); border-radius:7px;
+                            color:var(--ink); padding:4px 7px; font-size:12.5px; font-family:inherit}
+  .tlrange input[type=time]:focus{outline:none; border-color:#3d5470}
+  .tlrange button{padding:4px 10px; font-size:12.5px}
+  #tlDay{background:#111a25; border:1px solid var(--line); border-radius:8px; color:var(--ink);
+         padding:5px 8px; font-size:12.5px; font-family:inherit}
+  #tlDay:focus{outline:none; border-color:#3d5470}
+  .tlhint{font-size:12px; color:var(--faint); font-variant-numeric:tabular-nums}
+  #timeline svg{cursor:crosshair}
+  .tlbrush{fill:rgba(120,170,235,.16); stroke:#78aaeb; stroke-width:1; stroke-dasharray:3 2}
   .legend{display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--dim); margin-top:10px}
   .legend i{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px}
   table{width:100%; border-collapse:collapse; font-size:13px}
@@ -176,11 +196,34 @@
 
   <div class="grid cards" id="cards"></div>
 
+  <div class="card" style="margin-top:14px">
+    <h2>时间轴 <span class="tag" id="tlTag"></span></h2>
+    <div class="tlbar">
+      <select id="tlDay" title="选择要查看的日期"></select>
+      <div class="tlseg" id="tlPresets"></div>
+      <div class="tlrange">
+        <input type="time" id="tlFrom" step="60" title="起始时间">
+        <span>→</span>
+        <input type="time" id="tlTo" step="60" title="结束时间">
+        <button id="tlApply">应用</button>
+      </div>
+      <div class="spacer"></div>
+      <span class="tlhint" id="tlHint"></span>
+      <button id="tlReset" title="回到全天视图">重置</button>
+    </div>
+    <div id="timeline"></div>
+    <div class="legend" id="tlLegend"></div>
+  </div>
+
   <div class="grid two" style="margin-top:14px">
     <div class="card">
-      <h2>今日时间轴 <span class="tag" id="tlTag"></span></h2>
-      <div id="timeline"></div>
-      <div class="legend" id="tlLegend"></div>
+      <h2>分心记录 <span class="tag" id="offTag"></span></h2>
+      <div class="ctl" style="margin-bottom:6px">
+        <label class="switch" style="font-size:12px">
+          <input type="checkbox" id="offFollow">
+          <span>跟随时间轴区间</span>
+        </label>
+      </div>
       <div class="offlist" id="offlist"></div>
     </div>
     <div class="card">

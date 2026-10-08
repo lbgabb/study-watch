@@ -260,10 +260,31 @@ def _ensure_monitor_alive() -> tuple[bool, str]:
         return True, f"已开始监督（PID {pid}）"
 
 
-def build_data() -> dict[str, Any]:
+def _query_day(path: str) -> date | None:
+    """从 /api/data?day=YYYY-MM-DD 里取日期；没有或格式不对就返回 None（=今天）。"""
+    if "?" not in path:
+        return None
+    qs = path.split("?", 1)[1]
+    for pair in qs.split("&"):
+        if pair.startswith("day="):
+            raw = pair[4:].strip()
+            try:
+                return date.fromisoformat(raw)
+            except ValueError:
+                return None
+    return None
+
+
+def build_data(day: date | None = None) -> dict[str, Any]:
+    """组装仪表盘数据。
+
+    day 指定"看哪一天"（默认今天）。概览卡、时间轴、分心明细、类别占比都属于这一天；
+    近 7 天与进程状态始终按当前情况给，不受影响。
+    """
     cfg = load_config()
     today = date.today()
-    all_recs = _records_on(today)
+    view_day = day or today
+    all_recs = _records_on(view_day)
     slotted = _with_slots(all_recs)
     agg = report.aggregate(all_recs)
 
@@ -272,7 +293,7 @@ def build_data() -> dict[str, Any]:
         {"ts": r["ts"], "sec": r["sec"], "on_task": bool(r.get("on_task")),
          "category": r.get("category") or "其他", "activity": r.get("activity") or "",
          "basis": r.get("basis") or "", "process": r.get("process") or ""}
-        for r in slotted[-TIMELINE_KEEP:]
+         for r in slotted[-TIMELINE_KEEP:]
     ]
 
     days = []
@@ -285,6 +306,17 @@ def build_data() -> dict[str, Any]:
             "on_task_sec": a["on_task_sec"], "off_task_sec": a["off_task_sec"],
             "on_task_rate": a["on_task_rate"], "cost_usd": a["cost_usd"],
         })
+
+    # 有记录的日子列表（供日切换器用），从近 7 天的范围内再往外多找一些
+    available = []
+    try:
+        for d in store.list_days(cfg):
+            available.append(d.isoformat())
+    except Exception:
+        available = [x["date"] for x in days if x["checks"]]
+    if view_day.isoformat() not in available:
+        available.append(view_day.isoformat())
+    available = sorted(set(available), reverse=True)[:60]
 
     key_ok, hint = _find_key(cfg)
     pids = running_monitors()
@@ -323,6 +355,9 @@ def build_data() -> dict[str, Any]:
             "last": last,
         },
         "days": days,
+        "view_day": view_day.isoformat(),
+        "is_today": view_day == today,
+        "available_days": available,
     }
 
 
@@ -638,7 +673,7 @@ class Handler(BaseHTTPRequestHandler):
             self._file(icon, "image/x-icon") if icon.is_file() else self._send(204, b"", "image/x-icon")
         elif route == "/api/data":
             try:
-                self._json(build_data())
+                self._json(build_data(_query_day(self.path)))
             except Exception as e:
                 self._json({"error": f"{type(e).__name__}: {e}"}, 500)
         elif route == "/api/config":

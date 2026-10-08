@@ -96,9 +96,10 @@ function renderCards(d) {
   c4.appendChild(el('div', 'sub', '平均延迟 ' + (t.avg_latency_ms || 0) + ' ms' + (t.errors ? ' · 失败 ' + t.errors : '')));
   wrap.appendChild(c4);
 
-  // 此刻在做什么
+  // 此刻在做什么（看历史日期时标题会改成"当天最后一条"）
   const card = el('div', 'card');
   card.style.gridColumn = '1 / -1';
+  card.id = 'nowCard';
   card.appendChild(el('h2', null, '现在'));
   const last = t.last;
   if (!last) {
@@ -137,48 +138,245 @@ function sizeSvg(svg, W, H) {
 }
 
 // ---------- 时间轴 ----------
-function renderTimeline(d) {
-  const host = document.getElementById('timeline');
+// 时间窗状态：{from, to} 为 null 表示"全天自动"（按当天首末条记录自适应）。
+// 数据本身一直是整天，缩放只是前端过滤，不改后端。
+let tlRange = null;          // {from: ms, to: ms} 或 null
+let tlBrush = null;          // 拖选中的临时区间 {from, to}（毫秒）
+let tlData = null;           // 缓存最近一次的数据，供重绘用
+let tlDay = null;            // 正在看哪一天（YYYY-MM-DD）；null = 后端默认（今天）
+
+// 当前视图是不是"今天"（决定要不要画"现在"虚线、提示怎么写）
+function tlIsToday() {
+  return !tlData || tlData.is_today !== false;
+}
+
+function tlItemsAll() {
+  return (tlData && tlData.today && tlData.today.timeline) || [];
+}
+
+function tlBounds() {
+  const items = tlItemsAll();
+  if (!items.length) return null;
+  const t0 = new Date(items[0].ts).getTime();
+  const last = items[items.length - 1];
+  const t1 = new Date(last.ts).getTime() + (last.sec || 60) * 1000;
+  return { t0, t1 };
+}
+
+// 选一个"整齐"的刻度间隔：目标是屏幕上每格约 60~110px
+function tlTickStep(span, width) {
+  const steps = [60e3, 2 * 60e3, 5 * 60e3, 10 * 60e3, 15 * 60e3, 30 * 60e3,
+                 3600e3, 2 * 3600e3, 3 * 3600e3, 6 * 3600e3, 12 * 3600e3, 24 * 3600e3];
+  for (const s of steps) {
+    if (span / s * 80 <= width) return s;
+  }
+  return steps[steps.length - 1];
+}
+
+function tlFmtTick(t, step) {
+  const d = new Date(t);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (step >= 3600e3) return hh + ':00';
+  return hh + ':' + mm;
+}
+
+// 日期下拉：列出有记录的日子（后端给 available_days）
+function tlBuildDays(d) {
+  const sel = document.getElementById('tlDay');
+  if (!sel || !d) return;
+  const days = d.available_days || [];
+  const want = d.view_day || '';
+  const sig = days.join(',') + '|' + want;
+  if (sel.dataset.sig === sig) return;          // 没变化就不重建，避免打断用户操作
+  sel.dataset.sig = sig;
+  sel.innerHTML = '';
+  const todayStr = new Date().toLocaleDateString('sv-SE');   // 本地时区的 YYYY-MM-DD
+  for (const ds of days) {
+    const o = document.createElement('option');
+    o.value = ds;
+    const label = ds + (ds === todayStr ? '（今天）' : '');
+    o.textContent = label;
+    if (ds === want) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => {
+    tlDay = sel.value;
+    tlRange = null;          // 换天就回到全天，避免拿着昨天的窗口看今天
+    syncTlInputs();
+    tlMarkPreset(null);
+    clearTlWarn();
+    refresh();
+  };
+}
+
+// 预设区间定义（分钟）；null 表示全天
+const TL_PRESETS = [
+  ['全天', null],
+  ['最近 1 小时', 60],
+  ['最近 3 小时', 180],
+  ['最近 6 小时', 360],
+  ['最近 12 小时', 720],
+];
+
+function tlBuildPresets() {
+  const host = document.getElementById('tlPresets');
+  if (!host) return;
   host.innerHTML = '';
-  const items = d.today.timeline || [];
-  document.getElementById('tlTag').textContent = items.length ? items.length + ' 段' : '';
-  if (!items.length) {
+  for (const [label, mins] of TL_PRESETS) {
+    const b = el('button', mins === null && tlRange === null ? 'on' : null, label);
+    b.dataset.mins = mins === null ? '' : String(mins);
+    b.onclick = () => {
+      const bd = tlBounds();
+      if (!bd) return;
+      if (mins === null) {
+        tlRange = null;
+      } else {
+        // 锚点：看今天时是"现在"，看历史日期时是那天最后一条记录。
+        // 否则在历史日期上点"最近 1 小时"会得到一段空窗口（数据早就结束了）。
+        const anchor = tlIsToday() ? Math.max(bd.t1, Date.now()) : bd.t1;
+        tlRange = { from: Math.max(bd.t0, anchor - mins * 60e3), to: anchor };
+      }
+      clearTlWarn();
+      syncTlInputs();
+      renderTimeline(tlData);
+    };
+    host.appendChild(b);
+  }
+}
+
+function tlMarkPreset(mins) {
+  const host = document.getElementById('tlPresets');
+  if (!host) return;
+  host.querySelectorAll('button').forEach(btn => {
+    const m = btn.dataset.mins === '' ? null : Number(btn.dataset.mins);
+    btn.classList.toggle('on', m === mins);
+  });
+}
+
+function syncTlInputs() {
+  const from = document.getElementById('tlFrom');
+  const to = document.getElementById('tlTo');
+  if (!from || !to) return;
+  if (!tlRange) { from.value = ''; to.value = ''; return; }
+  from.value = msToTimeInput(tlRange.from);
+  to.value = msToTimeInput(tlRange.to);
+}
+
+function msToTimeInput(ms) {
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+// 把 "HH:MM" 解释成当天的本地时间；跨零点（结束早于开始）时把结束挪到次日
+function timeInputToMs(value, dayMs, isEnd) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((value || '').trim());
+  if (!m) return null;
+  const d = new Date(dayMs);
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  return d.getTime();
+}
+
+function tlApplyCustom() {
+  const bd = tlBounds();
+  if (!bd) return;
+  const f = timeInputToMs(document.getElementById('tlFrom').value, bd.t0, false);
+  const t = timeInputToMs(document.getElementById('tlTo').value, bd.t0, true);
+  if (f === null || t === null) {
+    setTlWarn('请把起止时间都填上（HH:MM）');
+    return;
+  }
+  let to = t;
+  if (to <= f) to += 86400e3;            // 跨零点，例如 22:00 → 02:00
+  if (to - f < 60e3) {
+    setTlWarn('区间太短了，至少 1 分钟');
+    return;
+  }
+  tlRange = { from: f, to };
+  tlMarkPreset(undefined);
+  clearTlWarn();
+  renderTimeline(tlData);
+}
+
+function setTlHint(text, warn) {
+  const h = document.getElementById('tlHint');
+  if (!h) return;
+  h.textContent = text || '';
+  h.style.color = warn ? 'var(--amber)' : 'var(--faint)';
+}
+
+// 校验类提示要能"顶住"5 秒一次的自动重绘：
+// 之前直接写 DOM，下一次 refresh 重绘时间轴就把它冲掉了，用户根本看不到。
+// 这里把警告存下来，renderTimeline 会优先显示它，用户下一次操作时清掉。
+let tlHintOverride = null;
+
+function setTlWarn(text) {
+  tlHintOverride = text || null;
+  setTlHint(text, true);
+}
+
+function clearTlWarn() {
+  tlHintOverride = null;
+}
+
+function renderTimeline(d) {
+  if (d) tlData = d;
+  const data = tlData;
+  const host = document.getElementById('timeline');
+  if (!host || !data) return;
+  host.innerHTML = '';
+
+  const all = tlItemsAll();
+  const bd = tlBounds();
+  if (!bd) {
+    document.getElementById('tlTag').textContent = '';
     host.appendChild(el('div', 'empty', '今天还没有判定记录'));
     document.getElementById('tlLegend').innerHTML = '';
+    setTlHint('还没有数据可看');
+    renderOffList(data, null);
     return;
   }
 
-  const W = containerWidth(host, 620);
+  // 可见区间：未指定则用全天实际跨度
+  const vis = tlRange || { from: bd.t0, to: bd.t1 };
+  const span = Math.max(60e3, vis.to - vis.from);
+  const items = all.filter(it => {
+    const s = new Date(it.ts).getTime();
+    return s + (it.sec || 60) * 1000 >= vis.from && s <= vis.to;
+  });
+
+  const W = containerWidth(host, 900);
   const H = 118, padL = 6, padR = 6, padT = 10;
-  const t0 = new Date(items[0].ts).getTime();
-  const t1 = new Date(items[items.length - 1].ts).getTime() + (items[items.length - 1].sec || 60) * 1000;
-  const span = Math.max(60000, t1 - t0);
-  const x = ms => padL + (ms - t0) / span * (W - padL - padR);
+  const x = ms => padL + (ms - vis.from) / span * (W - padL - padR);
 
   const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H });
   sizeSvg(svg, W, H);
   svg.dataset.kind = 'timeline';
 
-  // 背景刻度（每小时一条）
-  const firstHour = new Date(t0); firstHour.setMinutes(0, 0, 0);
-  for (let t = firstHour.getTime(); t <= t1; t += 3600000) {
+  // 背景刻度（间隔自适应：放大到分钟级时不再只画整点）
+  const step = tlTickStep(span, W);
+  const firstFloor = Math.floor(vis.from / step) * step;
+  for (let t = firstFloor; t <= vis.to; t += step) {
+    if (t < vis.from) continue;
     const px = x(t);
     svg.appendChild(svgEl('line', { x1: px, y1: padT, x2: px, y2: H - 30, stroke: '#22303f', 'stroke-width': 1 }));
     const label = svgEl('text', { x: px + 3, y: H - 16, fill: '#5d6f85', 'font-size': 11 });
-    label.textContent = new Date(t).toTimeString().slice(0, 2) + ':00';
+    label.textContent = tlFmtTick(t, step);
     svg.appendChild(label);
   }
 
   // 每个判定一段，高度按专注/分心区分
   for (const it of items) {
     const start = new Date(it.ts).getTime();
-    const w = Math.max(2, x(start + (it.sec || 60) * 1000) - x(start));
+    const end = start + (it.sec || 60) * 1000;
+    const cx0 = Math.max(x(start), padL), cx1 = Math.min(x(end), W - padR);
+    const w = Math.max(2, cx1 - cx0);
     const onTask = it.on_task;
     const color = onTask ? (CAT_COLORS[it.category] || '#4cc97a') : OFF_COLOR;
     const h = onTask ? 34 : 20;
     const y = padT + (onTask ? 0 : 40);
     const rect = svgEl('rect', {
-      x: x(start), y: y, width: w, height: h, rx: 3,
+      x: cx0, y: y, width: w, height: h, rx: 3,
       fill: color, opacity: onTask ? .92 : .85
     });
     const tip = svgEl('title');
@@ -196,34 +394,142 @@ function renderTimeline(d) {
   const labOff = svgEl('text', { x: 220, y: H - 4, fill: OFF_COLOR, 'font-size': 11 });
   labOff.textContent = '下行：分心';
   svg.appendChild(labOn); svg.appendChild(labOff);
+
+  // 缩放到较小区间时，画一条"现在"的位置线，方便对照（只看今天时才有意义）
+  const now = Date.now();
+  if (tlIsToday() && now >= vis.from && now <= vis.to) {
+    const px = x(now);
+    svg.appendChild(svgEl('line', { x1: px, y1: padT, x2: px, y2: H - 30, stroke: '#78aaeb', 'stroke-width': 1, 'stroke-dasharray': '3 3', opacity: .7 }));
+  }
+
   host.appendChild(svg);
 
-  // 图例：出现过的类别
-  const used = [...new Set(items.map(i => i.category))];
-  const lg = document.getElementById('tlLegend');
-  lg.innerHTML = '';
-  for (const c of used) {
-    const s = el('span');
-    const i = el('i'); i.style.background = CAT_COLORS[c] || '#8fa6bf';
-    s.appendChild(i); s.appendChild(document.createTextNode(c));
-    lg.appendChild(s);
+  // ---- 交互：拖选区间缩放 + 滚轮缩放 ----
+  const brushRect = svgEl('rect', { class: 'tlbrush', x: 0, y: 0, width: 0, height: 0, visibility: 'hidden' });
+  svg.appendChild(brushRect);
+
+  const msAt = evt => {
+    const r = svg.getBoundingClientRect();
+    const px = Math.min(Math.max(evt.clientX - r.left, padL), W - padR);
+    return vis.from + (px - padL) / (W - padL - padR) * span;
+  };
+
+  let dragFrom = null;
+  svg.addEventListener('pointerdown', evt => {
+    if (evt.button !== 0) return;
+    dragFrom = msAt(evt);
+    tlBrush = { from: dragFrom, to: dragFrom };
+    svg.setPointerCapture(evt.pointerId);
+  });
+  svg.addEventListener('pointermove', evt => {
+    if (dragFrom === null) return;
+    tlBrush = { from: Math.min(dragFrom, msAt(evt)), to: Math.max(dragFrom, msAt(evt)) };
+    const a = x(tlBrush.from), b = x(tlBrush.to);
+    brushRect.setAttribute('x', a);
+    brushRect.setAttribute('width', Math.max(1, b - a));
+    brushRect.setAttribute('y', padT);
+    brushRect.setAttribute('height', H - 30 - padT);
+    brushRect.setAttribute('visibility', 'visible');
+    setTlHint('松手即缩放到 ' + msToTimeInput(tlBrush.from) + ' – ' + msToTimeInput(tlBrush.to));
+  });
+  const endDrag = evt => {
+    if (dragFrom === null) return;
+    const sel = tlBrush;
+    dragFrom = null;
+    brushRect.setAttribute('visibility', 'hidden');
+    if (!sel || sel.to - sel.from < 60e3) {   // 单击（或几乎没拖动）：当作取消
+      tlBrush = null;
+      renderTimeline(null);
+      return;
+    }
+    tlRange = sel;
+    tlBrush = null;
+    tlMarkPreset(undefined);
+    clearTlWarn();
+    renderTimeline(null);
+  };
+  svg.addEventListener('pointerup', endDrag);
+  svg.addEventListener('pointercancel', endDrag);
+
+  // 滚轮缩放：以光标位置为锚点
+  svg.addEventListener('wheel', evt => {
+    evt.preventDefault();
+    const anchor = msAt(evt);
+    const factor = evt.deltaY > 0 ? 1.25 : 0.8;
+    let from = anchor - (anchor - vis.from) * factor;
+    let to = anchor + (vis.to - anchor) * factor;
+    // 不超出当天数据的边界，也不窄于 1 分钟
+    const minSpan = 60e3;
+    if (to - from < minSpan) {
+      const mid = (from + to) / 2;
+      from = mid - minSpan / 2; to = mid + minSpan / 2;
+    }
+    from = Math.max(from, bd.t0 - 3600e3);
+    to = Math.min(to, bd.t1 + 3600e3);
+    tlRange = { from, to };
+    tlMarkPreset(undefined);
+    clearTlWarn();
+    renderTimeline(null);
+  }, { passive: false });
+
+  // ---- 标签与提示 ----
+  const shown = items.length;
+  document.getElementById('tlTag').textContent =
+    `${msToTimeInput(vis.from)}–${msToTimeInput(vis.to)}｜${shown} 段`;
+  if (tlHintOverride) {
+    setTlHint(tlHintOverride, true);          // 校验提示优先，不被重绘冲掉
+  } else if (!tlRange) {
+    setTlHint(`${all.length} 段都在视图内（自动铺满当天）`);
+  } else {
+    setTlHint(`显示 ${shown}/${all.length} 段｜在此区间内拖动可再放大，滚轮缩放`);
   }
-  const sp = el('span');
-  const si = el('i'); si.style.background = OFF_COLOR;
-  sp.appendChild(si); sp.appendChild(document.createTextNode('分心'));
-  lg.appendChild(sp);
+  // 图例
+  const cats = [...new Set(items.filter(i => i.on_task).map(i => i.category || '其他'))];
+  const legend = document.getElementById('tlLegend');
+  legend.innerHTML = '';
+  for (const c of cats) {
+    const s = document.createElement('span');
+    const i = document.createElement('i');
+    i.style.background = CAT_COLORS[c] || '#4cc97a';
+    s.appendChild(i);
+    s.appendChild(document.createTextNode(c));
+    legend.appendChild(s);
+  }
+  const s2 = document.createElement('span');
+  const i2 = document.createElement('i');
+  i2.style.background = OFF_COLOR;
+  s2.appendChild(i2);
+  s2.appendChild(document.createTextNode('分心'));
+  legend.appendChild(s2);
+
+  // 分心明细：可选跟随当前区间
+  const follow = document.getElementById('offFollow');
+  renderOffList(data, (follow && follow.checked) ? vis : null);
 }
 
 // ---------- 分心记录明细 ----------
-function renderOffList(d) {
+// 可选 range：只显示落在该时间区间内的记录（跟随时间轴缩放时用）
+function renderOffList(d, range) {
   const host = document.getElementById('offlist');
   host.innerHTML = '';
-  const evs = (d.today.off_events || []).slice().reverse();
+  const all = (d.today.off_events || []);
+  const evs = (range
+    ? all.filter(e => {
+        const t = new Date(e.ts).getTime();
+        return t >= range.from && t <= range.to;
+      })
+    : all).slice().reverse();
+
+  const tag = document.getElementById('offTag');
+  if (tag) tag.textContent = range ? `${evs.length}/${all.length} 条` : (all.length ? all.length + ' 条' : '');
+
   if (!evs.length) {
-    host.appendChild(el('div', 'sub', '今天还没有分心记录。'));
+    host.appendChild(el('div', 'sub', range ? '这个时间段内没有分心记录。' : '今天还没有分心记录。'));
     return;
   }
-  const head = el('div', 'sub', '分心记录（' + evs.length + ' 条，最新在前）');
+  const head = el('div', 'sub', range
+    ? `该区间分心 ${evs.length} 条（共 ${all.length} 条，最新在前）`
+    : '分心记录（' + evs.length + ' 条，最新在前）');
   head.style.marginBottom = '4px';
   host.appendChild(head);
   for (const e of evs.slice(0, 12)) {
@@ -857,9 +1163,24 @@ function showOffline() {
   if (btns) btns.innerHTML = '';
 }
 
+// 非今天时，在标题和"现在"面板上标明日期，避免误读成实时数据
+function tlApplyDateLabels(d) {
+  const st = document.querySelector('#statusText');
+  const nowH2 = document.querySelector('#nowCard h2');
+  const day = d && d.view_day;
+  const past = d && d.is_today === false;
+  if (nowH2) {
+    nowH2.innerHTML = past
+      ? '当天最后一条 <span class="tag">' + day + '（历史）</span>'
+      : '现在';
+  }
+  document.body.classList.toggle('past-day', !!past);
+}
+
 async function refresh() {
   try {
-    const d = await api('/api/data');
+    const d = await api('/api/data' + (tlDay ? ('?day=' + encodeURIComponent(tlDay)) : ''));
+    tlBuildDays(d);
     if (offlineNotified) {
       offlineNotified = false;
       document.getElementById('warnBox').innerHTML = '';
@@ -875,12 +1196,41 @@ async function refresh() {
     renderMeta(d);
     renderRecent(d);
     renderControl(d);
+    // 必须放在 renderCards 之后：它每次都会重建卡片，把"现在"这个标题覆盖回去
+    tlApplyDateLabels(d);
   } catch (e) {
     showOffline();
   }
 }
 
+// 支持用 ?day=YYYY-MM-DD 直接打开某一天（可收藏 / 分享链接）
+(function initDayFromUrl() {
+  const m = /[?&]day=(\d{4}-\d{2}-\d{2})/.exec(location.search);
+  if (m) {
+    tlDay = m[1];
+    const todayStr = new Date().toLocaleDateString('sv-SE');
+    if (tlDay === todayStr) tlDay = null;      // 就是今天的话不必固定住
+  }
+})();
+
 document.getElementById('btnRefresh').onclick = refresh;
+
+// 时间轴工具条：预设 / 自定义区间 / 重置 / 明细跟随
+tlBuildPresets();
+document.getElementById('tlApply').onclick = tlApplyCustom;
+document.getElementById('tlReset').onclick = () => {
+  tlRange = null;
+  syncTlInputs();
+  tlMarkPreset(null);
+  clearTlWarn();
+  renderTimeline(null);
+};
+for (const id of ['tlFrom', 'tlTo']) {
+  const node = document.getElementById(id);
+  node.addEventListener('keydown', e => { if (e.key === 'Enter') tlApplyCustom(); });
+}
+document.getElementById('offFollow').onchange = () => renderTimeline(null);
+
 refresh();
 timer = setInterval(refresh, 5000);
 

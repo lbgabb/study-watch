@@ -1,0 +1,20 @@
+# 换行符规则（放在项目根，对所有 clone 的人生效）
+# 为什么需要它：Windows 的 .cmd/.bat 与 PowerShell 脚本按本地换行解读，
+# 在 Linux/Mac 上被改成 LF 后批处理行为会异常；而 .ico/.png 是二进制，
+# 一旦被 autocrlf 当文本做换行转换就彻底损坏（图标会变成白纸）。
+# 有了这个文件就不用依赖各人的 core.autocrlf 设置。
+
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+*.py   text
+*.js   text
+*.html text
+*.css  text
+*.json text
+*.md   text
+*.txt  text
+
+*.ico  binary
+*.png  binary

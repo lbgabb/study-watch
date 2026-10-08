@@ -21,6 +21,7 @@ $steps = @(
     @{ Name = '提醒窗渲染（PrintWindow 结构判定）'; Script = 'tests\test_popup_shot.py' },
     @{ Name = '仪表盘 API 与启停控制';          Script = 'tests\test_server.py' },
     @{ Name = '设置读写（校验/白名单/还原）';    Script = 'tests\test_config_api.py' },
+    @{ Name = '仪表盘界面交互（无头浏览器实测）'; Script = 'tools\cdp_check.py http://127.0.0.1:8770/' },
     @{ Name = '控制面板流程（开/暂停/恢复/停）'; Script = 'tests\control_flow.py' },
     @{ Name = '服务韧性（监控被杀后自动拉起）';  Script = 'tests\test_recovery.py --port 0' },
     @{ Name = '用户意图（停止后不被刷新拉起）';  Script = 'tests\test_intent.py --port 0' },
