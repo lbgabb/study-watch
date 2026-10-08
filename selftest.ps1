@@ -15,6 +15,7 @@ if (-not $python) { Write-Host "未找到 Python。" -ForegroundColor Red; exit 
 
 $steps = @(
     @{ Name = '脚本编码（.ps1 带 BOM / .bat 不带）'; Script = 'tools\fix_script_encoding.py --check' },
+    @{ Name = 'README 语法（中英两版：加粗/表格/锚点）'; Script = 'tools\check_readme.py' },
     @{ Name = 'JSON 解析健壮性（畸形输出修补）'; Script = 'tests\test_json_repair.py' },
     @{ Name = '服务商兼容性（降级链与报错提示）';  Script = 'tests\test_provider_compat.py' },
     @{ Name = '截图策略（按前台应用分配截图）';   Script = 'tests\test_policy.py' },

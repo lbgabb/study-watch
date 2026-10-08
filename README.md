@@ -1,58 +1,57 @@
-# 学习监督助手（study-watch）
+# study-watch
 
-> 跟着番茄钟节奏学习，同时让视觉模型盯着你有没有真的在学：每隔几分钟截一张屏判断"你此刻在做什么"，
-> 分心就弹窗提醒，并把每次判定记成可复盘的时间轴与日报。**休息时段的判定不计入统计**——
-> 老老实实休息不该让你的数据变难看。
+> 中文文档见 [README.zh-CN.md](README.zh-CN.md)。
 
-判定不是靠窗口标题猜的——**截图会真的送进模型**，所以「标题写着高数课、实际在刷短视频」这种情况也能识别出来。
+> Study on a Pomodoro rhythm while a vision model checks whether you're actually studying: every few minutes it grabs a screenshot and asks "what is this person doing?", pops up a reminder when you drift off, and logs every verdict into a reviewable timeline and daily report. **Verdicts taken during breaks are excluded from your stats** — taking an honest break shouldn't make your numbers look bad.
 
-![专注计划](assets/pomodoro-card.png)
+It does not guess from window titles. **The screenshot is actually sent to the model**, so "the title says Linear Algebra but the screen is a short-video feed" is caught.
+
+![Focus plan](assets/pomodoro-card.png)
 
 ```
-[00:10:23] 截图 1440x900 -> 1440x900 / 167 KB｜前台：msedge.exe
-[00:10:25] 在状态｜学习｜在 B 站观看理论力学期末急救课程，画面正讲转动惯量的平行轴定理
-[00:10:25]     依据：播放区是课程讲义，"02 转动惯量——平行轴定理"，公式 J_z = J_zc + md²
-[00:10:25]     2.5s 内返回｜tokens 684/347｜$0.0006
+[00:10:23] screenshot 1440x900 -> 1440x900 / 167 KB | foreground: msedge.exe
+[00:10:25] ON TASK | Study | Watching a mechanics revision lecture; the slide is deriving the parallel axis theorem
+[00:10:25]     basis: lecture notes visible, "02 Moment of inertia - parallel axis theorem", formula J_z = J_zc + md²
+[00:10:25]     returned in 2.5s | tokens 684/347 | $0.0006
 ```
 
-- **番茄钟 / 专注计划**（本项目的重点）：内置 25/5、90/20、52/17、15/3 四种节奏，
-  自动切换专注与休息、支持自定义且**记得住你的数值**；休息时段不计入专注率、也不弹分心提醒
-- **Windows 桌面工具**，Python 3.10+，唯一第三方依赖是 Pillow
-- **不绑定 DeepSeek**：走标准 OpenAI 兼容协议，任何支持图片输入的模型都能用（含本地 llama.cpp / LM Studio）
-- **按前台应用分配截图**：游戏不判定、短视频一切换就查、聊天每 10 分钟、阅读每 5 分钟……省调用也提准确率
-- **本地网页仪表盘**：时间轴可缩放与切换日期，启停与全部设置都在网页里改，不用手编配置文件
-- 截图默认**只在内存里**编码后发 API，不落盘
-- 一键部署脚本会自动检查环境、**缺依赖时自动装**（国内网络自动走镜像）、建好桌面快捷方式
+- **Pomodoro / focus plan** (the centrepiece): four built-in rhythms (25/5, 90/20, 52/17, 15/3), automatic focus↔break switching, full customisation that **remembers your numbers**; breaks are excluded from the focus rate and never trigger a distraction popup
+- **Windows desktop tool**, Python 3.10+, single third-party dependency (Pillow)
+- **Not tied to any one vendor**: standard OpenAI-compatible protocol, so any vision-capable model works — including a local llama.cpp / LM Studio server
+- **Per-application capture policy**: skip games entirely, check short-video sites on every window switch, chat every 10 minutes, reading every 5 — saves API calls and improves accuracy
+- **Local web dashboard**: zoomable timeline, date switching, and every setting editable in the browser — no hand-editing config files
+- Screenshots are **encoded in memory only** and sent straight to your API; nothing is written to disk by default
+- The setup script checks your environment, **installs missing dependencies automatically** (falling back to mirrors when PyPI times out), and creates desktop shortcuts
 
-仪表盘长这样（下图用的是演示数据，不是真实记录）：
+The dashboard (screenshot uses synthetic demo data, not real records):
 
-![仪表盘](assets/dashboard-preview.png)
+![Dashboard](assets/dashboard-preview.png)
 
 ---
 
-## 目录
+## Contents
 
-- [快速开始](#快速开始)
-- [番茄钟 / 专注计划](#番茄钟--专注计划)
-- [截图策略：按前台应用分配](#截图策略按前台应用分配)
-- [可视化仪表盘](#可视化仪表盘)
-- [判断机制](#判断机制)
-- [配置](#配置)
-- [换别的 API / 本地模型](#换别的-api--本地模型)
-- [成本](#成本)
-- [隐私说明](#隐私说明)
-- [自测](#自测)
-- [已知边界](#已知边界)
-- [目录结构](#目录结构)
-- [开发笔记](#开发笔记)
-- [这个项目是怎么写出来的](#这个项目是怎么写出来的)
+- [Quick start](#quick-start)
+- [Pomodoro focus plan](#pomodoro-focus-plan)
+- [Capture policy: allocating checks per application](#capture-policy-allocating-checks-per-application)
+- [The dashboard](#the-dashboard)
+- [How a check works](#how-a-check-works)
+- [Configuration](#configuration)
+- [Using another API or a local model](#using-another-api-or-a-local-model)
+- [Cost](#cost)
+- [Privacy](#privacy)
+- [Tests](#tests)
+- [Known limits](#known-limits)
+- [Repository layout](#repository-layout)
+- [Development notes](#development-notes)
+- [How this project was written](#how-this-project-was-written)
 - [License](#license)
 
 ---
 
-## 快速开始
+## Quick start
 
-### 一键部署（推荐）
+### One-shot setup (recommended)
 
 ```powershell
 git clone https://github.com/lbgabb/study-watch.git
@@ -60,573 +59,645 @@ cd study-watch
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-`setup.ps1` 会依次：查 Windows → 找 Python → 检查 `PIL`/`tkinter`/`winsound` →
-**缺 Pillow 时自动安装**（默认源超时的话自动改走清华/阿里镜像）→ 检查 API key →
-缺图标就生成 → 建两个桌面快捷方式 → 跑一次**不花钱**的冒烟测试。
+`setup.ps1` walks through: check Windows → find Python → check `PIL`/`tkinter`/`winsound` →
+**install Pillow if missing** (retrying via a mirror when the default index times out) →
+check the API key → generate the icon if absent → create two desktop shortcuts →
+run a **free** smoke test.
 
-看到 `=== 结果：N 项正常 / 0 项失败 ===` 就成了。
+You're done when you see `=== result: N ok / 0 failed ===`.
 
-### 手动
+### Manual
 
 ```powershell
-python -m pip install -r requirements.txt          # 只有 Pillow
-$env:DEEPSEEK_API_KEY = "sk-xxxx"                  # 或者在仪表盘「设置」里填
-python monitor.py --check-api                      # 先确认模型能用（用内置小图，不截屏）
-python monitor.py --minutes 25                     # 监督 25 分钟试试
+python -m pip install -r requirements.txt          # Pillow only
+$env:DEEPSEEK_API_KEY = "sk-xxxx"                  # or fill it in the dashboard's Settings panel
+python monitor.py --check-api                      # verify the model works (built-in test image, no screenshot)
+python monitor.py --minutes 25                     # monitor for 25 minutes
 ```
 
-> 装了多个 Python、或想让工具固定用某一个：在项目根目录建 `py-path.txt`，
-> 第一行写解释器的完整路径即可（这个文件已在 `.gitignore` 里，不会进版本库）。
+> Multiple Pythons installed, or want to pin one? Create `py-path.txt` in the project root with
+> the full path to the interpreter on the first line (already in `.gitignore`).
 
-### 日常使用
+### Day-to-day
 
-| 入口 | 作用 |
+| Entry point | What it does |
 | --- | --- |
-| 桌面快捷方式 **学习监督** | 双击静默转入后台开始监督，已在运行则不会重复启动 |
-| 桌面快捷方式 **学习监督 仪表盘** | 打开网页仪表盘（`http://127.0.0.1:8770/`） |
-| `stop.bat` | 结束后台监督 |
-| `report.bat` | 打印今日日报 |
+| Desktop shortcut **学习监督** ("study watch") | Starts monitoring silently in the background; won't double-start if already running |
+| Desktop shortcut **学习监督 仪表盘** ("dashboard") | Opens the web dashboard at `http://127.0.0.1:8770/` |
+| `stop.bat` | Stops background monitoring |
+| `report.bat` | Prints today's report |
 
-常用命令：
+Useful commands:
 
 ```powershell
-python monitor.py --status       # 体检：进程、服务、配置是否生效、今日数据
-python monitor.py --policy       # 看当前前台应用会命中哪条截图规则
-python monitor.py --check-api    # 用内置小图自检模型连通性（不截你的屏）
-python monitor.py --once         # 立刻判一次
-python monitor.py --stop         # 停止监督（按命令行识别进程，换机器也能停掉）
+python monitor.py --status       # health check: processes, service, whether config took effect, today's numbers
+python monitor.py --policy       # which capture rule the current foreground app matches
+python monitor.py --check-api    # verify model connectivity with a built-in image (never your screen)
+python monitor.py --once         # run a single check now
+python monitor.py --stop         # stop monitoring (identifies processes by command line, works on any machine)
 python monitor.py --report --days 7
-python monitor.py --export       # 导出 Markdown 日报
+python monitor.py --export       # export a Markdown report
 ```
 
 ---
 
-## 番茄钟 / 专注计划
+## Pomodoro focus plan
 
-仪表盘顶部的「专注计划」卡片，或命令行 `pomodoro.ps1`。它不只是个计时器——
-**计划状态会被写进每次判定记录**，所以事后能看出"这一轮专注质量如何"。
+The "focus plan" card at the top of the dashboard, or `pomodoro.ps1` from the command line.
+It is more than a timer: **the plan state is written into every verdict record**, so you can
+tell afterwards how good a given focus round actually was.
 
-![专注计划卡片](assets/pomodoro-card.png)
+![Focus plan card](assets/pomodoro-card.png)
 
-### 内置节奏与各自的依据
+### Built-in rhythms, and what each is actually based on
 
-| 预设 | 节奏 | 依据（诚实版） |
+| Preset | Rhythm | Basis (honest version) |
 | --- | --- | --- |
-| 25 / 5 | 专注 25 分、休息 5 分，每 4 轮长休 20 分 | Cirillo 的实践总结，把任务切到"足以立刻开始"的大小。**不是实验结论** |
-| 90 / 20 | 专注 90 分、休息 20 分 | Kleitman 的 BRAC：清醒时警觉度约 90 分钟一个周期。观察性证据支持这个量级，个体差异很大 |
-| 52 / 17 | 专注 52 分、休息 17 分 | DeskTime 2014 年对用户数据的观察性统计。不是对照实验，有"自愿上报"偏差 |
-| 15 / 3 | 专注 15 分、休息 3 分 | 状态差、任务难启动时的短冲刺。先用最小代价进入状态 |
-| 自定义 | 自己填 | —— |
+| 25 / 5 | 25 min focus, 5 min break, long break every 4 rounds | Cirillo's practical method: shrink a task until it is small enough to start immediately. **Not an experimental finding** |
+| 90 / 20 | 90 min focus, 20 min break | Kleitman's BRAC: alertness appears to cycle roughly every 90 minutes while awake. Observational support for the order of magnitude; individual variation is large |
+| 52 / 17 | 52 min focus, 17 min break | DeskTime's 2014 observational statistics over their own users. Not a controlled trial, and subject to self-report bias |
+| 15 / 3 | 15 min focus, 3 min break | A short sprint for bad days and hard-to-start tasks: pay the smallest possible price to get into the work |
+| Custom | Whatever you enter | — |
 
-比具体数字更可靠的是三条共同点：**连续专注有上限；休息要真的离开任务；把时长固定下来能省掉每次"要不要休息"的决策消耗。**
-所以挑一个你能坚持的，比挑一个"最科学"的重要。
+More reliable than any specific number are the three things these share: **sustained attention has a
+ceiling; a break has to actually leave the task; and fixing the durations removes the recurring
+decision of when to rest.** Pick the one you can keep up — that matters more than picking the
+"most scientific" one.
 
-### 一个刻意的设计：休息不算进专注率
+### A deliberate design choice: breaks don't count against you
 
-休息时段的判定会被标记为 `exclude_from_stats`，**不计入专注率与类别占比**，而是单独记成"休息时长"。
+Verdicts taken during a break are tagged `exclude_from_stats`. They are **not counted in the focus
+rate or the category breakdown**; they are recorded separately as break time.
 
-理由很实际：如果老实休息反而让数据变难看，你下次就不敢休息了——那就本末倒置。
-实测对照（休息时刷了 5 分钟手机）：
+The reasoning is practical: if resting honestly makes your numbers look worse, you'll stop resting —
+which defeats the purpose. Measured comparison (5 minutes of phone scrolling during a break):
 
 ```
-把休息计入统计：专注率 44.4%
-排除休息时段　：专注率 100.0%   休息单独记 300s
+break counted in stats : focus rate 44.4%
+break excluded         : focus rate 100.0%   break recorded separately: 300s
 ```
 
-同理，**休息时默认不弹"你分心了"**（可在卡片上勾选打开）。休息就该离开屏幕，
-这时候提醒只会让人不敢休息。
+For the same reason, **breaks do not trigger "you got distracted" popups by default**
+(there's a checkbox to turn that on). A break means leaving the screen; a popup then only
+teaches you not to take breaks.
 
-### 操作
+### Using it
 
-仪表盘上：选节奏 →（可选）填轮数与主题 → 开始。运行中显示圆环倒计时、轮次进度点，
-可以「提前休息」「休息够了，继续」「结束计划」。
+In the dashboard: pick a rhythm → optionally set rounds and a topic → start. While running you get a
+ring countdown, round progress dots, and buttons for "take a break early", "break's over, continue",
+and "end plan".
 
-**自定义是持久的**：直接改「专注 / 休息 / 每几轮长休 / 长休时长」这几个数字就等于切到自定义节奏，
-**改动会自动存进 `config.json` 的 `plan` 段**——关掉浏览器、重启服务后再打开还是你调好的数值，
-不用每次重填。几条具体行为：
+**Customisation persists.** Editing the focus / break / long-break numbers switches you to a custom
+rhythm, and **the change is saved into the `plan` section of `config.json`** — close the browser,
+restart the service, and your numbers are still there. Specific behaviours:
 
-- 点「自定义」**不会**抹掉你已经调好的数字（只是把它标记成自定义）
-- 选中某个预设才会套用该预设的数值
-- 开始计划时的取值优先级：**本次请求传的 > 你存下来的 > 预设默认**
+- Clicking "Custom" does **not** wipe the numbers you already set (it only marks the rhythm as custom)
+- Selecting a concrete preset applies that preset's numbers
+- When a plan starts, precedence is: **request > your saved values > preset defaults**
 
 ```powershell
-.\start-25min.bat                                  # 25/5 开一轮
-powershell -File .\pomodoro.ps1 -Rounds 4 -Note "高数第三章"
+.\start-25min.bat                                  # start one 25/5 round
+powershell -File .\pomodoro.ps1 -Rounds 4 -Note "Chapter 3 exercises"
 powershell -File .\pomodoro.ps1 -Preset ultradian  # 90/20
 powershell -File .\pomodoro.ps1 -Focus 50 -Break 10
 powershell -File .\pomodoro.ps1 -Status
 powershell -File .\pomodoro.ps1 -Stop
 ```
 
-计划存在 `data/plan.json`，**重启监督会接着算**，不会从头开始。
-`rounds` 填 0 表示不限轮数，做到你手动停。
+The plan lives in `data/plan.json` and **resumes where it left off** if you restart the monitor —
+it does not start over. `rounds: 0` means unlimited, until you stop it manually.
 
 ---
 
-## 截图策略：按前台应用分配
+## Capture policy: allocating checks per application
 
-同一套间隔用在所有程序上是浪费——看视频、聊天、写代码的"变化速度"完全不同。规则写在 `config.json` 的 `capture.rules`，**按书写顺序，第一条命中者生效**：
+Using the same interval for every application wastes calls — a video, a chat window and a code
+editor change at completely different rates. Rules live in `capture.rules` in `config.json` and are
+matched **in order; the first hit wins**:
 
 ```jsonc
 "capture": {
   "enabled": true,
-  "min_gap_sec": 20,       // 兜底闸门：两次判定至少隔这么久（防止重启后连打）
+  "min_gap_sec": 20,       // safety gate: at least this long between two checks
   "rules": [
-    // 这个应用干脆不判定（游戏、模拟器）
-    { "name": "游戏与模拟器", "process": ["steam", "mumup*", "pcl*", "minecraft*"],
+    // Don't check this application at all (games, emulators)
+    { "name": "games", "process": ["steam", "mumup*", "pcl*", "minecraft*"],
       "action": "skip" },
 
-    // 一切换到它就立刻查（切换点最容易漏判）
-    { "name": "短视频", "title_contains": ["抖音", "快手", "小红书"],
+    // Check the moment you switch to it (switch points are where drift happens)
+    { "name": "short video", "title_contains": ["TikTok", "Shorts", "Reels"],
       "switch_check": true },
 
-    // 长时间停在一个窗口的：切过来先看一眼，之后每 10 分钟一次
-    { "name": "即时通讯", "process": ["wechat*", "qq", "tim*", "discord*"],
+    // Windows you sit in for a long time: one check on arrival, then every 10 minutes
+    { "name": "chat", "process": ["wechat*", "qq", "discord*", "telegram*"],
       "polling_sec": 600 },
 
-    // 滚动阅读的：距上次判定满 N 秒才查
-    { "name": "长文阅读", "process": ["sumatrapdf*", "winword*", "wps*"],
+    // Scrolling reading: check once N seconds have passed since the last verdict
+    { "name": "long reads", "process": ["sumatrapdf*", "winword*", "wps*"],
       "tick_sec": 300 }
   ]
 }
 ```
 
-| 字段 | 作用 |
+| Field | Meaning |
 | --- | --- |
-| `process` / `process_contains` | 按进程名匹配，支持 `*` 通配 |
-| `title` / `title_contains` | 按窗口标题匹配（与进程命中任一即可） |
-| `action: "skip"` | 该应用**不判定**：不截图、不调 API、不计入统计 |
-| `tick_sec: N` | 距上次判定满 N 秒才查 |
-| `polling_sec: N` | 切到该应用先查一次，之后每 N 秒一次 |
-| `switch_check: true` | 窗口一切换到该应用就立刻查 |
+| `process` / `process_contains` | Match by process name, `*` wildcard supported |
+| `title` / `title_contains` | Match by window title (either may hit) |
+| `action: "skip"` | **Never check** this application: no screenshot, no API call, not counted |
+| `tick_sec: N` | Check only if N seconds have passed since the last verdict |
+| `polling_sec: N` | Check once on arrival, then every N seconds |
+| `switch_check: true` | Check immediately on every window switch to this application |
 
-没命中任何规则的程序走全局 `interval_sec`——**不配规则时行为和朴素版本完全一样**。
+Applications matching no rule fall back to the global `interval_sec` — **with no rules configured
+the behaviour is exactly the naive version**.
 
-跳过的原因会写进日志，每次监督结束也会汇总：
+Reasons for skipping are logged, and summarised when monitoring ends:
 
 ```
-该应用不判定：notepad（规则：记事本不判定），本轮不截图
-本次监督结束：运行 40秒｜判定 0 次｜按应用策略省下 4 次判定｜花费 $0.0000
+not checking this application: notepad (rule: skip notepad), no screenshot this round
+monitoring ended: ran 40s | 0 checks | 4 checks saved by policy | $0.0000 spent
 ```
 
-状态存在 `data/state.json`，**跨重启续上**，所以重启监督不会连打好几次。
+State is kept in `data/state.json` and **carries across restarts**, so restarting the monitor
+does not fire several checks back to back.
 
 ---
 
-## 可视化仪表盘
+## The dashboard
 
-浏览器打开 `http://127.0.0.1:8770/`（端口被占会自动往后找）。
+Open `http://127.0.0.1:8770/` in a browser (the port walks forward if it's taken).
 
-| 区域 | 内容 |
+| Area | Contents |
 | --- | --- |
-| 概览卡 | 当天专注率、覆盖时长、分心次数、花费 |
-| **现在 / 当天最后一条** | 最近一次判定的"在做什么" + 判断依据（屏幕上看到的原文） |
-| **时间轴** | 按类别着色的横条，上行=在状态、下行=分心，**条长就是真实时长**；可缩放、可选日期 |
-| **分心记录明细** | 什么时候分心的、当时在做什么、依据是什么；可跟随时间轴区间 |
-| 类别占比 / 近 7 天 / 分心来源 / 运行概况 | 环形图、堆叠柱状图、按程序排名、token 与成本 |
-| **控制面板** | 开始 / 暂停 / 停止 / 立即判一次 / 导出 / 打开设置 |
+| Summary cards | Today's focus rate, covered time, distraction count, spend |
+| **Now / last of the day** | The most recent verdict — what you were doing — plus the evidence (text actually seen on screen) |
+| **Timeline** | Category-coloured bars; upper row = on task, lower row = distracted. **Bar length is real duration**; zoomable, with a date picker |
+| **Distraction list** | When you drifted, what you were doing, and the evidence; can follow the timeline window |
+| Category breakdown / last 7 days / distraction sources / run stats | Donut, stacked bars, per-process ranking, tokens and cost |
+| **Control panel** | Start / pause / stop / check once / export / open settings |
 
-### 时间轴：缩放与自定义区间
+### Timeline: zoom and custom ranges
 
-时间轴默认铺满当天，想细看某一段有四种操作：
+The timeline spans the whole day by default. Four ways to look closer:
 
-| 操作 | 效果 |
+| Action | Effect |
 | --- | --- |
-| **日期下拉**（左上） | 切换要看的日期（列出所有有记录的日子）；`?day=2026-10-08` 也能直接打开某天，可收藏 |
-| **预设按钮** | 全天 / 最近 1·3·6·12 小时。看今天时以"现在"为锚点，看历史日期时以**那天末尾**为锚点 |
-| **自定义区间** | 填起止时间（HH:MM）后点「应用」；起 > 止时自动按跨零点处理（如 22:00 → 02:00） |
-| **在时间轴上拖选** | 直接框住一段就缩放过去；**滚轮**以光标位置为中心缩放 |
-| 重置 | 回到全天视图 |
+| **Date dropdown** (top left) | Switch the day being viewed (all days with records are listed); `?day=2026-10-08` opens a specific day directly and is bookmarkable |
+| **Preset buttons** | Whole day / last 1, 3, 6, 12 hours. Anchored to "now" for today, and to **the end of that day's data** when viewing a past date |
+| **Custom range** | Enter start and end (HH:MM) and press Apply; if start > end it is treated as crossing midnight (e.g. 22:00 → 02:00) |
+| **Drag on the timeline** | Drag to select a span and zoom into it; the **mouse wheel** zooms around the cursor |
+| Reset | Back to the whole day |
 
-细节：
+Details:
 
-- 刻度间隔**自适应**：全天时按小时，放大到小时以内会自动变成 10 分钟、5 分钟
-- 只看今天时会画一条"现在"的虚线做参照
-- 标题实时显示当前窗口与段数，例如 `23:35–00:01｜12 段`
-- 「分心记录」可以勾选**跟随时间轴区间**，只看这段时间里的分心
-- 看历史日期时，顶部会标明"当天最后一条 YYYY-MM-DD（历史）"，概览卡也换成那天的数字（近 7 天图始终按当前情况显示）
+- Tick spacing is **adaptive**: hourly across a day, automatically switching to 10- and 5-minute
+  steps once you zoom inside an hour
+- When viewing today, a dashed "now" line is drawn for reference
+- The heading live-updates with the current window and segment count, e.g. `23:35–00:01 | 12 segments`
+- "Distractions" can be set to **follow the timeline window**, so you only see that span
+- On a past date the header reads "last of YYYY-MM-DD (history)" and the summary cards switch to that
+  day's numbers (the 7-day chart always reflects the current situation)
 
-### 控制面板的三种状态
+### The control panel's three states
 
-| 状态 | 含义 | 可做的操作 |
+| State | Meaning | Available actions |
 | --- | --- | --- |
-| 未在监督 | 没有监督进程 | 开始监督 |
-| 监督中 | 每 N 秒截屏判定一次 | 暂停判定、停止监督、立即判一次、导出、打开设置 |
-| 已暂停 | 进程还在待命，**不截图、不花钱**，恢复是瞬时的 | 继续监督、停止监督、打开设置 |
+| Not monitoring | No monitor process | Start monitoring |
+| Monitoring | Screenshot + verdict every N seconds | Pause judging, stop monitoring, check once, export, open settings |
+| Paused | Process still alive but **not screenshotting and not spending**; resuming is instant | Resume, stop monitoring, open settings |
 
-「暂停」只是不再判定，进程留着；「停止」是彻底结束监督进程。
-服务会**尊重你的意图**：点过停止之后，即使监控进程被外部杀掉，也不会被状态刷新偷偷拉回来。
+"Pause" simply stops judging while keeping the process; "stop" ends the monitor process entirely.
+The service **respects your intent**: after you press stop, an externally killed monitor will not be
+quietly resurrected by a status refresh.
 
-### 设置都在控制面板里
+### All settings live in the control panel
 
-控制面板的「打开设置」滑出抽屉，**不用手编 config.json**：
+"Open settings" slides out a drawer, so **you never hand-edit `config.json`**:
 
-| 分组 | 能改什么 | 生效时机 |
+| Group | What you can change | When it applies |
 | --- | --- | --- |
-| API key | 查看现状（只显示掩码 + 来源），填新的并保存 | 立即 |
-| 判定节奏 | 判定间隔、空闲跳过阈值、最小间隔、全局间隔覆盖 | 下一轮判定 |
-| 截屏与图片 | 图片精度、JPEG 质量、缩放宽度、是否落盘、是否存原始回复 | 多数下一轮 |
-| 判定标准 | 学习目标、严格程度、额外规则、归类约定 | 下一轮判定 |
-| 提醒 | 开关、提示音、安静时长、连续几次才提醒、自动关闭 | 下一轮判定 |
-| API / 模型 | base_url、模型名、key 环境变量名、凭据文件、超时、max_tokens、temperature | **需重启监督** |
+| API key | See current state (masked, with its source), enter a new one and save | Immediately |
+| Cadence | Check interval, idle-skip threshold, minimum gap, global interval override | Next check |
+| Screenshots | Image detail, JPEG quality, scale width, whether to save to disk, whether to keep raw replies | Mostly next check |
+| Judging criteria | Study goal, strictness, extra rules, category aliases | Next check |
+| Reminders | On/off, sound, quiet period, how many consecutive misses before reminding, auto-close | Next check |
+| API / model | base_url, model name, key env var, credentials file, timeout, max_tokens, temperature | **Requires restarting the monitor** |
 
-每个字段旁有徽章标明「下一轮生效」还是「需重启」——监控进程**每一轮都重读配置文件**，所以大部分设置改完下个周期就生效，不必重启。
+Each field carries a badge saying whether it takes effect "next check" or "requires restart" — the
+monitor **re-reads the config file every round**, so most settings apply on the next cycle without
+a restart.
 
-- **测试 API 连通**：用一张内置小图（**不截你的屏**）验证 base_url / 模型 / key，不落盘
-- **保存**：只写 `config.json`；有非法值时**整批拒绝**并说明原因
-- key 存到 `data/secrets.json`（不进版本库）。优先级：环境变量 > 面板保存 > 凭据文件
-- 想直接打开设置页：`http://127.0.0.1:8770/?settings=1`
+- **Test API connectivity** uses a built-in test image (**never your screen**) to validate
+  base_url / model / key, and saves nothing
+- **Save** writes only `config.json`; invalid values cause the **whole batch to be rejected** with reasons
+- The key is stored in `data/secrets.json` (not in version control). Precedence: environment variable
+  > panel-saved > credentials file
+- Open the settings drawer directly: `http://127.0.0.1:8770/?settings=1`
 
 ---
 
-## 判断机制
+## How a check works
 
-一轮的完整流程：
+One full round:
 
 ```
-循环开始
- ├─ 重读配置（面板改的设置从这里生效）
- ├─ 检查 data/paused        → 暂停中：本轮不做任何事
- ├─ 检查是否锁屏 / 空闲过长  → 是：跳过本轮（不截图、不花钱、不计入统计）
- ├─ 按前台应用决定要不要截图 → 策略说不查：跳过
- ├─ 截图（整个虚拟桌面）→ 缩放 → JPEG → base64
- ├─ 连"前台程序名 + 窗口标题"发给视觉模型
- ├─ 解析 JSON 判定 → 写日志 → 分心则弹提醒
- └─ 睡满 interval_sec → 回到循环开始
+loop
+ ├─ re-read config            (settings changed in the panel take effect here)
+ ├─ check data/paused         → paused: do nothing this round
+ ├─ check locked screen / long idle → yes: skip (no screenshot, no spend, not counted)
+ ├─ ask the capture policy    → policy says no: skip
+ ├─ screenshot (whole virtual desktop) → scale → JPEG → base64
+ ├─ send image + "foreground process + window title" to the vision model
+ ├─ parse the JSON verdict → append to log → pop a reminder if off task
+ └─ sleep interval_sec → back to the top
 ```
 
-模型被要求只回一个 JSON：
+The model is asked to return exactly one JSON object:
 
 ```json
-{"activity":"一句话描述此刻在做什么","category":"学习|工作|娱乐|社交|游戏|购物|闲置|其他",
- "on_task":true,"confidence":0.86,"basis":"引用屏幕上实际看到的具体文字或界面元素"}
+{"activity":"one sentence on what is happening","category":"Study|Work|Entertainment|Social|Gaming|Shopping|Idle|Other",
+ "on_task":true,"confidence":0.86,"basis":"quote specific text or UI elements actually visible on screen"}
 ```
 
-提示词里写死了几条关键规则（可在设置里改）：
+A few rules are fixed in the prompt (editable in settings):
 
-- **以画面为准**，窗口标题只是线索，防止"标题像学习、内容是短视频"漏判
-- 短视频/推荐流形态（一屏一视频、弹幕、点赞投币）**即使内容是知识科普也算娱乐**
-- 课程视频、教材 PDF、题库、写代码、背单词、记笔记算学习
-- 锁屏 / 纯桌面 / 看不出在用电脑算"闲置"
+- **The picture wins**; the window title is only a hint — this is what stops "looks like study,
+  is actually a short-video feed" from slipping through
+- Short-video / recommendation-feed layouts (one video per screen, danmaku, like/coin buttons)
+  **count as entertainment even when the content is educational**
+- Lecture videos, textbook PDFs, problem sets, writing code, flashcards and note-taking count as study
+- Locked screen / bare desktop / no sign of use counts as "idle"
 
-模型偶尔会吐出不合法 JSON，此时会**宽容修补**（漏转义引号、缺/多逗号、夹带解释文字），仍失败就带上"必须输出合法 JSON"的提示重发一次。
+The model occasionally emits invalid JSON. That is handled by a **tolerant repair pass**
+(unescaped quotes, missing or duplicated commas, prose wrapped around the object), and if that
+still fails the request is resent with a "you must output valid JSON" note.
 
-截屏开销（2880×1800 屏实测）：抓屏 ~98ms + 缩放 ~80ms + 编码 ~15ms ≈ **193ms**，JPEG 约 150KB。
+Screenshot cost, measured on a 2880×1800 display: grab ~98ms + scale ~80ms + encode ~15ms ≈
+**193ms**, JPEG ≈ 150 KB.
 
 ---
 
-## 配置
+## Configuration
 
-配置文件 `config.json`（也可以在仪表盘里改）：
+`config.json` (also editable in the dashboard):
 
 ```jsonc
 {
-  "interval_sec": 180,        // 判定间隔（秒）
-  "idle_skip_sec": 300,       // 超过这么久没键鼠输入就跳过
-  "max_width": 1600,          // 截图缩放宽度，越小越省
-  "detail": "low",            // 图片精度：low 更省，high 能看清小字
-  "capture": { /* 见上文"截图策略" */ },
+  "interval_sec": 180,        // seconds between checks
+  "idle_skip_sec": 300,       // skip if there has been no input for this long
+  "max_width": 1600,          // screenshot scale width; smaller is cheaper
+  "detail": "low",            // image detail: low is cheaper, high can read small text
+  "capture": { /* see "Capture policy" above */ },
+  "plan": {                   // pomodoro defaults, remembered from the dashboard
+    "preset": "pomodoro", "focus_min": 25, "break_min": 5,
+    "long_every": 4, "long_break_min": 20, "rounds": 0,
+    "remind_on_break": false, "strict_break": false
+  },
   "api": {
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-flash",
-    "api_key_env": "DEEPSEEK_API_KEY",       // 去这个环境变量里找 key
+    "api_key_env": "DEEPSEEK_API_KEY",       // environment variable to read the key from
     "credentials_file": "~/.study-watch/credentials.yaml"
-                                             // 没有环境变量时，从这个 yaml 里读
-                                             // 形如：DEEPSEEK_API_KEY: sk-xxxx
+                                             // fallback yaml, e.g. DEEPSEEK_API_KEY: sk-xxxx
   },
   "judge": {
-    "goal": "备考学习（课程视频、教材、网课、题库、编程/外语学习、写作业与笔记）",
-    "strictness": "normal",   // loose 宽松 / normal / strict 严格
+    "goal": "Exam preparation (lecture videos, textbooks, online courses, problem sets, programming/language study, homework and notes)",
+    "strictness": "normal",   // loose / normal / strict
     "extra_rules": [],
     "alias_rules": []
   },
   "reminder": {
     "enabled": true, "sound": true,
     "mute_after_remind_sec": 300,
-    "off_task_streak_required": 1,   // 改成 2 就是"连续 2 次分心才提醒"
+    "off_task_streak_required": 1,   // set to 2 to require two consecutive misses
     "auto_close_sec": 60
   },
   "privacy": {
-    "save_shots": false,      // true 会把截图存到 data/shots
-    "save_api_raw": true      // 存模型原始回复，方便排查误判
+    "save_shots": false,      // true writes screenshots to data/shots
+    "save_api_raw": true      // keep raw model replies, useful for diagnosing misjudgements
   }
 }
 ```
 
-环境变量可临时覆盖：`STUDY_WATCH_INTERVAL`、`STUDY_WATCH_MODEL`、`STUDY_WATCH_BASE_URL`、`DEEPSEEK_API_KEY`。
+Environment variables override temporarily: `STUDY_WATCH_INTERVAL`, `STUDY_WATCH_MODEL`,
+`STUDY_WATCH_BASE_URL`, `DEEPSEEK_API_KEY`.
 
 ---
 
-## 换别的 API / 本地模型
+## Using another API or a local model
 
-用的是**标准 OpenAI 兼容协议**（`POST {base_url}/chat/completions`，Bearer 鉴权，图片走 `image_url` 的 base64 data URL），不是某家的私有接口。**唯一要求是模型支持图片输入。**
+This speaks the **standard OpenAI-compatible protocol** (`POST {base_url}/chat/completions`, Bearer
+auth, images as base64 data URLs in `image_url`) — not a vendor-private API. **The only requirement
+is that the model accepts image input.**
 
 ```powershell
-# 例：换成通义千问兼容模式（不用改配置文件）
+# Example: switch to a Qwen vision model without touching the config file
 $env:STUDY_WATCH_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 $env:STUDY_WATCH_MODEL    = "qwen-vl-max"
 $env:DASHSCOPE_API_KEY    = "sk-xxxx"
 python monitor.py --check-api
 ```
 
-> `base_url` 要不要带 `/v1`：代码统一拼 `{base_url}/chat/completions`。OpenRouter、SiliconFlow、通义兼容模式这类要写 `/v1`；`https://api.deepseek.com` 这类不用。拿不准就试一次——404 就是路径不对。
+> Whether `base_url` needs `/v1`: the code always appends `/chat/completions`. Services like
+> OpenRouter, SiliconFlow and DashScope's compatible mode need `/v1`; `https://api.deepseek.com`
+> does not. When unsure, just try it — a 404 means the path is wrong.
 
-**本地模型**（零 API 费用、截图不出本机）：llama.cpp 或 LM Studio 起了 OpenAI 兼容服务后，`base_url` 填 `http://127.0.0.1:1234/v1`，key 随便填个非空值。
+**Local models** (zero API cost, screenshots never leave the machine): start an OpenAI-compatible
+server with llama.cpp or LM Studio, set `base_url` to `http://127.0.0.1:1234/v1`, and put any
+non-empty string as the key.
 
-不同服务商对协议的支持程度不一样，代码里做了**逐级降级**（对上层透明）：
+Providers differ in how much of the protocol they support, so the client degrades **step by step**,
+transparently to the rest of the code:
 
-| 情况 | 处理 |
+| Situation | Handling |
 | --- | --- |
-| 不认 `image_url.detail`（llama.cpp / LM Studio / 部分网关） | 自动去掉该字段重发 |
-| 不支持 `response_format: json_object` | 自动去掉它重发，靠宽容 JSON 解析兜底 |
-| 正文放在 `content` 数组里 | 自动拼接取文本 |
-| 鉴权失败 / 模型不存在 / 被限流 | **不重试**，直接给出可操作提示（含当前 base_url 与 model） |
+| `image_url.detail` rejected (llama.cpp / LM Studio / some gateways) | Retry without that field |
+| `response_format: json_object` unsupported | Retry without it, relying on the tolerant JSON parser |
+| Text returned inside a `content` array | Concatenated into a string |
+| Auth failure / unknown model / rate limit | **No retry** — an actionable message including the current base_url and model |
 
 ---
 
-## 成本
+## Cost
 
-以 `deepseek-flash` 为例，每次判定约 **$0.0006~0.0010**（图 400~700 输入 token + 300~600 输出）：
+With `deepseek-flash`, one check costs roughly **$0.0006–0.0010** (400–700 input tokens for the image
+plus 300–600 output tokens):
 
-| 频率 | 每天 4 小时 | 每月（22 天） |
+| Frequency | 4 hours/day | Per month (22 days) |
 | --- | --- | --- |
-| 2 分钟一次 | 120 次 ≈ $0.10 | ≈ $2.2 |
-| 3 分钟一次（默认） | 80 次 ≈ $0.07 | ≈ $1.5 |
-| 5 分钟一次 | 48 次 ≈ $0.04 | ≈ $0.9 |
+| Every 2 minutes | 120 checks ≈ $0.10 | ≈ $2.2 |
+| Every 3 minutes (default) | 80 checks ≈ $0.07 | ≈ $1.5 |
+| Every 5 minutes | 48 checks ≈ $0.04 | ≈ $0.9 |
 
-配上截图策略后实际更低：游戏时段完全不查，聊天/阅读时段降频，只有短视频这类高风险场景才提高频率。
+With a capture policy the real figure is lower: nothing is spent during games, chat and reading are
+throttled, and only high-risk situations such as short-video feeds are checked more often.
 
-省钱手段：调大间隔、把 `max_width` 降到 1280、`detail` 保持 `low`、用截图策略把无关程序排除掉。
-
----
-
-## 隐私说明
-
-- 截图**只在内存里**编码后直接发给你配置的 API，默认**不落盘**（`save_shots: false`）
-- 落盘的是文本判定结果（在做什么、依据里引用的屏幕文字）——依据可能包含屏幕上的原文片段。介意的话关掉 `save_api_raw`，或定期清理 `data/`
-- `data/` 整个目录已在 `.gitignore` 里，包含日志、判定记录、原始回复、以及面板里填的 key（`data/secrets.json`）
-- 仪表盘只监听 `127.0.0.1`，不对外暴露
-- 想让它别看某个应用（密码管理器、私密聊天），在 `capture.rules` 里给它 `"action": "skip"`
+Ways to spend less: raise the interval, drop `max_width` to 1280, keep `detail` at `low`, and use
+capture rules to exclude irrelevant applications.
 
 ---
 
-## 自测
+## Privacy
+
+- Screenshots are **encoded in memory only** and sent straight to the API you configured; by default
+  **nothing is written to disk** (`save_shots: false`)
+- What does get written is the text verdict (what you were doing, plus the on-screen text quoted as
+  evidence) — that evidence can contain fragments of what was on screen. If that bothers you, turn
+  off `save_api_raw` or clear `data/` periodically
+- The whole `data/` directory is in `.gitignore`; it holds logs, verdict records, raw replies, and
+  any key saved from the panel (`data/secrets.json`)
+- The dashboard listens on `127.0.0.1` only and is not exposed to the network
+- To keep an application out of it entirely (password managers, private chats), give it
+  `"action": "skip"` in `capture.rules`
+
+---
+
+## Tests
 
 ```powershell
-.\selftest.bat        # 一键跑全部 16 项，最后给出汇总
+.\selftest.bat        # runs all 17 checks and prints a summary
 ```
 
-| 测试 | 验证什么 |
+| Test | What it verifies |
 | --- | --- |
-| `tests/test_json_repair.py` | 模型吐出畸形 JSON（漏转义引号、缺逗号、多余逗号、夹带解释文字）能否修补回可解析 |
-| `tests/test_provider_compat.py` | 服务商兼容性：标准 / 不认 detail / 不支持 JSON 模式的降级链；鉴权与 404 不重试且提示可操作 |
-| `tests/test_policy.py` | 截图策略：规则匹配、skip/tick/polling/switch 四种语义、兜底闸门、关闭策略时的回退 |
-| `tests/test_report.py` | 日报聚合与时长折算（含分心、错误、跳过三类记录） |
-| `tests/test_popup_shot.py` | 提醒窗是否真的渲染出标题/正文/按钮文字（PrintWindow 抓窗口内容做结构判定） |
-| `tests/test_server.py` | 仪表盘服务能否启动、API 字段是否齐全、时间轴/类别时长是否自洽、启停控制是否生效 |
-| `tests/test_config_api.py` | 设置读写：白名单、类型/取值校验、非法输入整批拒绝、key 只回掩码、跑完配置逐字节还原 |
-| `tests/control_flow.py` | 控制面板流程：开 → 暂停 → 恢复 → 停止，以及"没在跑时点暂停会自动拉起" |
-| `tests/test_recovery.py` | 服务韧性：监控进程被强杀后，用户主动操作能把监控接回来 |
-| `tests/test_intent.py` | 用户意图：点过停止之后，反复刷新状态也不会把监控偷偷拉起来 |
-| `tests/test_readonly_status.py` | 状态接口只读性：连打 40 次轮询，进程数/标记/state.json 零变化 |
-| `tests/test_cross_process_lock.py` | 跨进程启动互斥：多个独立进程并发启动只起一个监控 |
-| `tests/test_plan.py` | 番茄钟：阶段推进、长休规则、轮次上限、跨重启续上，以及**休息不计入专注率**；界面部分用无头浏览器实点 |
-| `tools/cdp_check.py` | **仪表盘界面交互**（无头 Edge + CDP 实测）：时间轴预设/自定义区间/拖选缩放、提示不被自动重绘冲掉、日期切换与历史标注 |
-| `monitor.py --dry-run` | 截图与前台窗口采集链路是否正常（不调用 API、不花钱） |
+| `tools/fix_script_encoding.py --check` | `.ps1` files have a UTF-8 BOM, `.cmd`/`.bat` files do not |
+| `tools/check_readme.py` | Both READMEs: `**bold**` markers balanced (they may span lines), consistent table columns, fenced blocks closed, every table-of-contents anchor resolves |
+| `tests/test_json_repair.py` | Malformed model JSON (unescaped quotes, missing/extra commas, prose around the object) can be repaired into something parseable |
+| `tests/test_provider_compat.py` | Provider compatibility: the degradation chain for standard / no-`detail` / no-JSON-mode providers; auth and 404 failures don't retry and produce actionable messages |
+| `tests/test_policy.py` | Capture policy: rule matching, the four skip/tick/polling/switch semantics, the safety gate, fallback when the policy is disabled |
+| `tests/test_report.py` | Daily aggregation and duration conversion (including distracted, error and skipped records) |
+| `tests/test_popup_shot.py` | The reminder window really renders its title/body/buttons (window contents captured via PrintWindow and checked structurally) |
+| `tests/test_server.py` | The dashboard service starts, API fields are complete, timeline/category durations are consistent, start/stop control works |
+| `tests/test_config_api.py` | Settings read/write: whitelist, type and value validation, whole-batch rejection of invalid input, keys returned masked only, config restored byte-for-byte afterwards |
+| `tests/test_plan.py` | Pomodoro: phase advancement, long-break rule, round limit, resume across restart, and **breaks excluded from the focus rate**; the UI half is driven through a real headless browser |
+| `tests/control_flow.py` | Control panel flow: start → pause → resume → stop, plus "pausing while stopped starts the monitor" |
+| `tests/test_recovery.py` | Resilience: after the monitor is killed, a user action brings it back |
+| `tests/test_intent.py` | User intent: after pressing stop, repeated status refreshes never resurrect the monitor |
+| `tests/test_readonly_status.py` | The status endpoint is read-only: 40 rapid polls change no process counts, flags or `state.json` |
+| `tests/test_cross_process_lock.py` | Cross-process start mutex: concurrent starts from independent processes produce exactly one monitor |
+| `monitor.py --dry-run` | The screenshot and foreground-window pipeline works (no API call, no spend) |
 
-`tests/test_plan_loop.py` 是**耗时的联动实测**（约 3 分钟，要真的等过一个阶段），
-所以没放进一键自测：它起一个 1 分钟一轮的计划和后台监控，验证监控进程会自己推进阶段、
-把切换写进日志、并给休息时段的记录打上"不计入统计"的标记。改了番茄钟与监控循环的接口后值得跑一次：
+`tests/test_plan_loop.py` is a **slow integration test** (~3 minutes, it genuinely waits for a phase
+boundary), so it is not part of the one-shot suite. It starts a 1-minute-per-round plan plus a
+background monitor, and verifies the monitor advances the phase by itself, logs the transition, and
+tags break-period records as excluded from stats. Worth running after touching the pomodoro or
+monitor-loop interfaces:
 
 ```powershell
 python tests\test_plan_loop.py
 ```
 
-另外 `tools/` 下有排障与生成工具：
+`tools/` additionally holds diagnostics and generators:
 
-| 工具 | 作用 |
+| Tool | Purpose |
 | --- | --- |
-| `tools/status.py` | 一次打印进程、今日汇总、日志尾部 |
-| `tools/list_procs.py` | 列出服务/监控进程及启动时间（排查重复进程） |
-| `tools/ensure_running.ps1` | 命令行把服务与监督都拉起来（排障用） |
-| `tools/measure_capture.py` | 实测截屏各阶段耗时与体积 |
-| `tools/show_settings.py` | 打印当前生效的设置 |
-| `tools/net_*.py` | 网络诊断：延迟/丢包、真实下载吞吐、CDN 节点对比、可选清晰度 |
-| `tools/cdp_check.py` | 无头浏览器实测仪表盘交互（时间轴、日期切换、提示是否被重绘冲掉） |
-| `tools/cdp_eval.py` | 在真实页面里执行 JS 并打印结果（前端排障用） |
-| `tools/hunt_flaky.py` | 反复跑自测直到复现偶发失败，并把上下文留档 |
-| `tools/repo_audit.py` | 发布前审计：扫描密钥、个人路径、不该提交的运行数据 |
-| `tools/pack_source.py` / `pack_friend.py` | 打包源码包 / 给朋友的运行包 |
-| `tools/make_github_upload.py` | 生成可直接拖到 GitHub 网页上传的目录 |
-| `tools/make_readme_shots.py` | 自动给 README 拍配图（起一个真实计划 + 截卡片与整页） |
-| `tools/make_demo_data.py` | 生成**零隐私**的演示数据（截图用），`--clean` 一键清掉 |
-| `tools/make_shortcut*.ps1` | 重建桌面快捷方式 |
-| `tools/fix_script_encoding.py` | 修正脚本编码（见下方开发笔记） |
+| `tools/status.py` | Print processes, today's summary and the tail of the log in one go |
+| `tools/list_procs.py` | List service/monitor processes with start times (for hunting duplicates) |
+| `tools/ensure_running.ps1` | Bring up both the service and monitoring from the command line |
+| `tools/measure_capture.py` | Measure each screenshot stage's time and size |
+| `tools/show_settings.py` | Print the currently effective settings |
+| `tools/net_*.py` | Network diagnostics: latency/loss, real download throughput, CDN comparison |
+| `tools/cdp_check.py` | Drive the real dashboard through a headless browser (timeline, date switching, whether hints survive a redraw) |
+| `tools/cdp_eval.py` | Evaluate JS inside the real page and print the result (front-end debugging) |
+| `tools/hunt_flaky.py` | Rerun the suite until an intermittent failure reproduces, keeping the context |
+| `tools/repo_audit.py` | Pre-publish audit: scan for secrets, personal paths and stray runtime data |
+| `tools/pack_source.py` / `pack_friend.py` | Build the source archive / a friendlier end-user archive |
+| `tools/make_github_upload.py` | Produce a folder that can be dragged straight into GitHub's web uploader |
+| `tools/make_readme_shots.py` | Take README screenshots automatically (start a real plan, capture the card and the full page) |
+| `tools/make_demo_data.py` | Generate **privacy-free** demo data for screenshots; `--clean` removes it |
+| `tools/make_shortcut*.ps1` | Rebuild the desktop shortcuts |
+| `tools/fix_script_encoding.py` | Fix script encodings (see the development notes) |
 
 ---
 
-## 已知边界
+## Known limits
 
-- **只在 Windows 上跑**：依赖 `user32`/`gdi32`/`shcore`/`ntdll`（ctypes）、`tkinter`、`winsound`
-- **全屏独占的游戏**可能截不到内容，会落到"闲置/其他"
-- **判定会误判**：觉得太严就用 `strictness: "loose"`，或把 `off_task_streak_required` 改成 2；觉得太松就 `strict` 并加 `extra_rules`
-- 它只提醒，**不锁屏、不阻止你打开任何程序**
-- 换机器可用（无硬编码路径），但需要装 Python 3.10+ 与 Pillow。脚本找 Python 的顺序是：
-  项目根目录的 `py-path.txt`（自建，已 gitignore）→ 常见安装位置（**优先挑已装 Pillow 的那个**）→ PATH。
-  一台机器上装了两个 Python 时，没依赖的那个会被自动跳过
-- 想跨平台需要重写 `lib/winapi.py`（窗口/空闲/锁屏/DPI）、`lib/notify.py`（提醒窗）、以及 `vision.py` 里的抓屏方式；策略层、数据层、模型层、界面都是平台无关的
+- **Windows only**: it relies on `user32`/`gdi32`/`shcore`/`ntdll` (ctypes), `tkinter` and `winsound`
+- **Exclusive-fullscreen games** may produce no capturable content and fall back to "idle/other"
+- **Judgements can be wrong**: if it's too strict use `strictness: "loose"` or set
+  `off_task_streak_required` to 2; if it's too lenient use `strict` and add `extra_rules`
+- It only reminds you — **it does not lock the screen or block any application**
+- It runs on another machine with no hard-coded paths, but needs Python 3.10+ and Pillow. The scripts
+  look for Python in this order: `py-path.txt` in the project root (yours to create, gitignored) →
+  common install locations (**preferring one that already has Pillow**) → `PATH`. On a machine with
+  two Pythons, the one missing dependencies is skipped automatically
+- Going cross-platform means rewriting `lib/winapi.py` (foreground window / idle / lock screen /
+  DPI), `lib/notify.py` (the reminder window) and the screen-grab in `vision.py`. The policy layer,
+  data layer, model layer and UI are platform-independent
 
 ---
 
-## 目录结构
+## Repository layout
 
 ```
 study-watch/
-├─ monitor.py               入口（等价 python -m lib.monitor）
-├─ config.json              配置（也可在仪表盘里改）
-├─ setup.ps1                一键部署：查环境、建快捷方式、冒烟测试
-├─ selftest.ps1 / .bat      一键自测（16 项）
-├─ study-watch.cmd          桌面「学习监督」快捷方式的目标（纯 ASCII 外壳）
-├─ dashboard.bat / .ps1     桌面「学习监督 仪表盘」快捷方式的目标
-├─ start.ps1 / .bat         控制台模式运行
-├─ pomodoro.ps1             番茄钟命令行入口（预设/自定义/状态/停止）
-├─ start-25min.bat          双击开一轮 25/5，结束后自动出日报
-├─ report.bat / stop.bat    看日报 / 结束后台监督
-├─ requirements.txt         只有 Pillow
+├─ monitor.py               entry point (equivalent to python -m lib.monitor)
+├─ config.json              configuration (also editable in the dashboard)
+├─ setup.ps1                one-shot setup: env checks, shortcuts, smoke test
+├─ selftest.ps1 / .bat      one-shot test suite (17 checks)
+├─ study-watch.cmd          target of the "study watch" desktop shortcut (pure ASCII wrapper)
+├─ dashboard.bat / .ps1     target of the "dashboard" desktop shortcut
+├─ start.ps1 / .bat         run in console mode
+├─ pomodoro.ps1             pomodoro CLI (presets / custom / status / stop)
+├─ start-25min.bat          double-click for one 25/5 round, then print the report
+├─ report.bat / stop.bat    print the report / stop background monitoring
+├─ requirements.txt         Pillow only
 ├─ LICENSE                  MIT
 ├─ assets/
-│  ├─ study-watch.ico       多尺寸图标（16~256，BMP/DIB 帧）
-│  ├─ icon-preview.png      各尺寸预览
-│  └─ dashboard-preview.png README 用的界面截图
+│  ├─ study-watch.ico       multi-size icon (16–256, BMP/DIB frames)
+│  ├─ icon-preview.png      size preview
+│  ├─ pomodoro-card.png     focus-plan card used in this README
+│  └─ dashboard-preview.png dashboard screenshot used in this README
 ├─ lib/
-│  ├─ monitor.py            主循环与 CLI
-│  ├─ config.py             配置加载与合并
-│  ├─ vision.py             截图编码、调用模型、JSON 解析与修补、key 解析
-│  ├─ policy.py             截图策略：按前台应用决定这一轮要不要截图
-│  ├─ plan.py               番茄钟状态机（阶段推进 / 长休规则 / 跨重启续上）
-│  ├─ winapi.py             前台窗口 / 空闲 / 锁屏 / DPI（纯 ctypes）
-│  ├─ proc.py               进程命令行查询（纯 ctypes 读 PEB）
-│  ├─ notify.py             置顶提醒窗 + 提示音 + 系统通知回退
-│  ├─ store.py / report.py  日志读写与日报聚合
-│  ├─ state.py              跨重启状态（上次判定时间 / 上次前台应用）
-│  ├─ server.py             仪表盘后端（纯标准库 HTTP + API + 启停控制）
-│  ├─ icon.py               图标绘制与 .ico 生成
-│  └─ common.ps1            PowerShell 侧公共函数
+│  ├─ monitor.py            main loop and CLI
+│  ├─ config.py             config loading and merging
+│  ├─ vision.py             screenshot encoding, model calls, JSON parsing/repair, key resolution
+│  ├─ policy.py             capture policy: decide whether this round needs a screenshot
+│  ├─ plan.py               pomodoro state machine (phase advance / long break / resume)
+│  ├─ winapi.py             foreground window / idle / lock screen / DPI (pure ctypes)
+│  ├─ proc.py               process command-line lookup (pure ctypes, reads the PEB)
+│  ├─ notify.py             topmost reminder window + sound + system-notification fallback
+│  ├─ store.py / report.py  log I/O and daily aggregation
+│  ├─ state.py              cross-restart state (last verdict time / last foreground app)
+│  ├─ server.py             dashboard backend (stdlib HTTP + API + start/stop control)
+│  ├─ icon.py               icon drawing and .ico generation
+│  └─ common.ps1            shared PowerShell helpers
 ├─ web/
-│  ├─ index.html            仪表盘页面（深色主题，无外部依赖）
-│  └─ app.js                前端：时间轴 / 环形图 / 柱状图 / 明细 / 控制 / 设置
-├─ tests/                   16 项自测
-└─ tools/                   排障与生成工具
+│  ├─ index.html            dashboard page (dark theme, no external dependencies)
+│  └─ app.js                front end: timeline / donut / bars / lists / control / settings
+├─ tests/                   17 self-tests
+└─ tools/                   diagnostics and generators
 ```
 
 ---
 
-## 开发笔记
+## Development notes
 
-几个踩过的坑，改代码前值得看一眼。
+Traps worth reading before changing code.
 
-### 脚本编码（最容易踩）
+### Script encoding (the easiest one to hit)
 
-- **`.ps1` 必须存成 UTF-8 with BOM**：PowerShell 5.1 靠 BOM 才认 UTF-8，否则中文注释会被按 GBK 拆字节，连引号配对都被破坏、直接语法报错
-- **`.cmd` / `.bat` 必须不能有 BOM**：cmd.exe 在 `chcp` 之前就按 ANSI 读文件，行首 BOM 会让 `@echo off` 失效
-- **批处理里不要写中文**：中文字节里可能含 `0x5C`（反斜杠），cmd 会把它当转义而报错。UI 文案一律交给 `.ps1`
+- **`.ps1` must be saved as UTF-8 *with BOM***: PowerShell 5.1 only recognises UTF-8 via the BOM.
+  Without it, non-ASCII comments are split as GBK bytes, quote pairing breaks, and you get a syntax
+  error
+- **`.cmd` / `.bat` must have *no* BOM**: cmd.exe reads the file as ANSI before `chcp` runs, and a
+  leading BOM breaks `@echo off`
+- **Don't put non-ASCII text in batch files**: those bytes can contain `0x5C` (backslash), which cmd
+  treats as an escape and errors on. Keep UI text in `.ps1`
 
-**这个坑踩过两次**：用普通文本编辑工具（或脚本里的 `write_text(encoding="utf-8")`）改 `.ps1` 时，
-BOM 会被悄悄丢掉，下次运行时 PowerShell 直接语法报错，而报错信息是一堆看不懂的乱码。
-所以 `python tools/fix_script_encoding.py` 加了 `--check` 模式，并且**作为自测的第一项**——
-改完不用记得跑，跑自测就会告诉你。修正：
+**This trap has been hit twice**: editing a `.ps1` with an ordinary text tool (or a script doing
+`write_text(encoding="utf-8")`) silently drops the BOM, and the next run fails with a wall of
+mojibake. So `fix_script_encoding.py` gained a `--check` mode, and it is now **the first step of the
+test suite** — you don't have to remember to run it.
 
 ```powershell
-python tools\fix_script_encoding.py          # 自动修正
-python tools\fix_script_encoding.py --check  # 只检查（有问题返回 1）
+python tools\fix_script_encoding.py          # fix automatically
+python tools\fix_script_encoding.py --check  # check only (exits 1 when wrong)
 ```
 
-### 图标
+### The icon
 
-`.ico` 用了 BMP/DIB 帧而不是 PNG 帧。PNG 帧在规范允许，但部分 Shell 渲染路径会显示成白纸。重新生成：`python -m lib.icon`。
+The `.ico` uses BMP/DIB frames rather than PNG frames. PNG frames are legal, but some Shell rendering
+paths draw them as a blank page. Regenerate with `python -m lib.icon`.
 
-### 状态接口必须只读
+### The status endpoint must stay read-only
 
-页面每 5 秒轮询 `/api/data`。任何"顺手在这里自愈一下"的改动都会让**停止按钮失效**（点完几秒又被拉起来）。`tests/test_readonly_status.py` 专门守这条不变量。
+The page polls `/api/data` every 5 seconds. Any "while I'm here, let me self-heal" change to that
+path **breaks the stop button** (the monitor gets pulled back up seconds after you stop it).
+`tests/test_readonly_status.py` guards this invariant.
 
-### 启动要跨进程互斥
+### Starting needs a cross-process mutex
 
-"用户点开始"和"服务自愈"是两个独立进程，靠文件锁（`data/start.lock`）串行化，否则会起出两个监控进程——重复判定、重复扣费、提醒弹两次。`tests/test_cross_process_lock.py` 守这条。
+"User pressed start" and "the service self-heals" are two independent processes; they are serialised
+by a file lock (`data/start.lock`). Without it you get two monitors: duplicate verdicts, duplicate
+spend, two popups. `tests/test_cross_process_lock.py` guards this.
 
-### 找 Python：要挑"能用"的那个
+### Finding Python: pick the one that *works*
 
-一台机器上装两个 Python 很常见（系统一个、便携版一个）。只按路径排序会挑到**没装 Pillow 的那个**，
-工具直接跑不起来。所以 `Resolve-Python` 的顺序是：
+Two Pythons on one machine is normal (system plus a portable build). Sorting by path alone picks the
+one **without Pillow** and the tool simply won't run. So `Resolve-Python` is ordered:
 
-1. 项目根的 `py-path.txt`（用户显式指定，最高优先）
-2. 常见安装位置，**先用 `import PIL` 试一遍，优先挑能用的**，其次才比版本号
-3. PATH 里的 `python`
+1. `py-path.txt` in the project root (explicit user choice, highest priority)
+2. common install locations — **tried with `import PIL` first, preferring a working one**, and only
+   then compared by version
+3. `python` on `PATH`
 
-另外脚本里**不要出现指向作者机器的路径**——那是换台机器就失效的隐形炸弹。
+Also: **never leave a path pointing at the author's machine** in a script — it is a silent time bomb
+that only goes off on someone else's computer.
 
-### 缺依赖要能自己救回来
+### Missing dependencies must be recoverable
 
-`setup.ps1` 检查依赖时有个坑：`$ErrorActionPreference = 'Stop'` 会把子进程写到 stderr 的
-`ImportError` traceback 当成终止错误，脚本直接崩掉——**而这恰恰是新用户最常遇到的情况**。
-检查前要临时放宽成 `Continue`。
+`setup.ps1` had a trap: `$ErrorActionPreference = 'Stop'` treats the `ImportError` traceback a child
+process writes to stderr as a terminating error, so the script dies — **precisely in the situation
+new users hit most often**. The check has to relax it to `Continue` first.
 
-真缺 Pillow 时自动安装，并且**默认源超时后自动换清华/阿里镜像**：国内直连 PyPI 经常卡死，
-这一步决定了新用户能不能顺利装上。
+When Pillow really is missing it installs automatically, and **falls back to a mirror when the
+default index times out**. A direct PyPI connection is often unusable from mainland China, and this
+step decides whether a new user can get set up at all.
 
-### Git 换行符与 .ico
+### Git line endings and .ico
 
-Windows 上 `core.autocrlf = true` 很常见。项目根**必须有 `.gitattributes`** 明确声明：
+`core.autocrlf = true` is common on Windows. The repository root **must** contain a `.gitattributes`
+stating:
 
 ```
-*.cmd  text eol=crlf      # 批处理必须是 CRLF
-*.ico  binary             # 否则会被当文本做换行转换，图标直接损坏
+*.cmd  text eol=crlf      # batch files must stay CRLF
+*.ico  binary             # otherwise newline conversion corrupts the icon
 *.png  binary
 ```
 
-自测办法：`git hash-object --path assets/study-watch.ico` 与 `--no-filters` 的结果必须一致
-（本项目实测 381038 字节逐字节相同）。
+To verify: `git hash-object --path assets/study-watch.ico` must equal the `--no-filters` result
+(381038 bytes, byte-identical, as measured here).
 
-### 前端改动要用真实浏览器验
+### Verify front-end changes in a real browser
 
-缩放、拖选这类交互**截图证明不了什么**（看不出"点了按钮之后状态对不对"）。而 Edge 新版无头的
-`--dump-dom` 不输出内容。解法是用 CDP（Chrome DevTools 协议）真的去点、去读 DOM：
-`tools/cdp_check.py` 就是为此写的，**纯标准库**实现了 WebSocket，不装任何包。
-它挂在自测第 8 项，改动前端后跑一次就知道有没有弄坏交互。
+Interactions like zooming and drag-selection **cannot be proven by a screenshot** — you can't tell
+from a picture whether the state after a click is correct. And Edge's new headless mode does not
+print anything for `--dump-dom`. The answer is CDP (Chrome DevTools Protocol): actually click and
+actually read the DOM. `tools/cdp_check.py` exists for this, implementing WebSocket in **pure
+standard library** with no packages installed. It is step 8 of the test suite, so a front-end change
+that breaks interactions shows up immediately.
 
-### 校验提示会被自动重绘冲掉
+### Validation hints get wiped by the automatic redraw
 
-页面每 5 秒重绘一次。任何"直接写 DOM 就完事"的提示（比如输入非法时的警告）都会在 5 秒内消失，
-用户根本看不到。提示状态要存下来，让重绘时优先显示它。
+The page redraws every 5 seconds. Any hint written straight into the DOM (an invalid-input warning,
+say) disappears within 5 seconds and the user never sees it. The hint state has to be stored so the
+redraw can prefer showing it.
 
-### 给 README 截图别用真实数据
+### Don't screenshot real data for the README
 
-一开始我直接截真实仪表盘，结果图里带上了聊天对象昵称、浏览记录、正在做的事——
-这些会跟着 README 一起进公开仓库。所以改成用 `tools/make_demo_data.py` 生成演示数据：
+The first attempt screenshotted the real dashboard, and the image carried chat-partner nicknames,
+browsing history and what I was working on — all of which would have entered a public repository
+alongside the README. So screenshots now use demo data from `tools/make_demo_data.py`:
 
 ```powershell
-python tools\make_demo_data.py --days 3 --plan   # 写入演示记录 + 一个进行中的计划
-python tools\make_readme_shots.py                # 起计划、截卡片与整页
-python tools\make_demo_data.py --clean           # 清掉演示记录
+python tools\make_demo_data.py --days 3 --plan   # write demo records + one running plan
+python tools\make_readme_shots.py                # start a plan, capture the card and full page
+python tools\make_demo_data.py --clean           # remove the demo records
 ```
 
-演示数据是**确定性生成**的（固定随机种子），所以每次截图结果一致，方便对比改动。
-生成前建议先备份 `data/logs`，截图后还原——真实记录和演示记录虽然能靠 `demo: true` 区分，
-但混在一起会让仪表盘上的数字不像你自己的。
+The demo data is **deterministically generated** (fixed seed), so screenshots come out identical
+each time, which makes changes easy to compare. Back up `data/logs` before generating and restore it
+afterwards: real and demo records are distinguishable via `demo: true`, but mixed together the
+dashboard numbers stop looking like yours.
 
-### 写演示文案时注意引号
+### Watch your quotes in demo copy
 
-中文里的引号用 `「」`，别在双引号字符串里再嵌 ASCII 的 `"`——那会把字符串提前截断，
-报的还是"忘记加逗号"这种看不出原因的错误。这个坑在同一份文件里踩了四次。
+Use `「」` for quotes inside non-ASCII prose; do not nest ASCII `"` inside a double-quoted string —
+it truncates the string and the error you get is "perhaps you forgot a comma", which points nowhere
+useful. That one was hit four times in a single file.
 
 ---
 
-## 这个项目是怎么写出来的
+## How this project was written
 
-代码由作者与 AI 编程助手（Claude / DeepSeek Harness）结对完成：需求、取舍、验收由作者把关，
-具体实现、调试与测试大量借助 AI 完成。测试套件（16 项，含无头浏览器实测仪表盘交互）
-是这套流程能站得住脚的主要原因——它挡下过不少"看起来对、实际有问题"的改动。
+The code was written by the author pair-programming with AI assistants (Claude / DeepSeek Harness):
+requirements, trade-offs and acceptance were the author's call, while much of the implementation,
+debugging and testing leaned on AI. The test suite (17 checks, including driving the dashboard
+through a headless browser) is the main reason that workflow holds up — it has blocked a good number
+of changes that looked right and weren't.
 
-细节与踩坑记录见上面的[开发笔记](#开发笔记)。
+See the [development notes](#development-notes) above for the traps found along the way.
 
 ## License
 
