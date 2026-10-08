@@ -1,10 +1,10 @@
 {
   "interval_sec": 180,
+  "min_gap_sec": 30,
   "max_width": 1600,
   "jpeg_quality": 85,
   "detail": "low",
   "idle_skip_sec": 300,
-
   "capture": {
     "enabled": true,
     "default_sec": null,
@@ -12,37 +12,103 @@
     "rules": [
       {
         "name": "游戏与模拟器：不判定",
-        "process": ["steam", "mumup*", "nx_main", "nemu*", "pcl*", "minecraft*", "javaw", "league*", "wegame", "gamepp*"],
+        "process": [
+          "steam",
+          "mumup*",
+          "nx_main",
+          "nemu*",
+          "pcl*",
+          "minecraft*",
+          "javaw",
+          "league*",
+          "wegame",
+          "gamepp*"
+        ],
         "action": "skip"
       },
       {
         "name": "短视频：一切换到就立刻查",
-        "title_contains": ["抖音", "快手", "小红书"],
+        "title_contains": [
+          "抖音",
+          "快手",
+          "小红书"
+        ],
         "switch_check": true
       },
       {
         "name": "即时通讯：切换看一眼，之后每 10 分钟",
-        "process": ["wechat*", "weixin*", "qq", "tim*", "telegram*", "discord*"],
+        "process": [
+          "wechat*",
+          "weixin*",
+          "qq",
+          "tim*",
+          "telegram*",
+          "discord*"
+        ],
         "polling_sec": 600
       },
       {
         "name": "长文阅读：每 5 分钟看一次",
-        "process": ["sumatrapdf*", "acrobat*", "acrord32", "foxitreader*", "winword*", "wps*", "et", "wpp*", "onenote*", "calibre*"],
+        "process": [
+          "sumatrapdf*",
+          "acrobat*",
+          "acrord32",
+          "foxitreader*",
+          "winword*",
+          "wps*",
+          "et",
+          "wpp*",
+          "onenote*",
+          "calibre*"
+        ],
         "tick_sec": 300
       },
       {
         "name": "写代码与终端：每 4 分钟看一次",
-        "process": ["code", "code - insiders", "devenv", "pycharm*", "idea*", "goland*", "clion*", "webstorm*", "windowsterminal", "cmd", "powershell", "pwsh", "wt", "xshell*", "mobaxterm*"],
+        "process": [
+          "code",
+          "code - insiders",
+          "devenv",
+          "pycharm*",
+          "idea*",
+          "goland*",
+          "clion*",
+          "webstorm*",
+          "windowsterminal",
+          "cmd",
+          "powershell",
+          "pwsh",
+          "wt",
+          "xshell*",
+          "mobaxterm*"
+        ],
         "tick_sec": 240
       },
       {
         "name": "播放器与音乐：每 5 分钟看一次",
-        "process": ["potplayer*", "vlc", "mpc-hc*", "kugou*", "qqmusic*", "cloudmusic*", "spotify*"],
+        "process": [
+          "potplayer*",
+          "vlc",
+          "mpc-hc*",
+          "kugou*",
+          "qqmusic*",
+          "cloudmusic*",
+          "spotify*"
+        ],
         "tick_sec": 300
       }
     ]
   },
-
+  "plan": {
+    "preset": "pomodoro",
+    "focus_min": 25,
+    "break_min": 5,
+    "long_every": 4,
+    "long_break_min": 20,
+    "rounds": 0,
+    "remind_on_break": false,
+    "strict_break": false
+  },
   "api": {
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-flash",

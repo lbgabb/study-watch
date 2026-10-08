@@ -25,6 +25,18 @@ DEFAULTS: dict[str, Any] = {
         "min_gap_sec": 20,        # 两次判定之间至少间隔这么久（防止重启后连打）
         "rules": [],
     },
+    # 番茄钟 / 专注计划：记住用户上次选的节奏与自定义数值，
+    # 省得每次打开都要重填一遍
+    "plan": {
+        "preset": "pomodoro",     # 上次用的预设；自定义时也会记成 custom
+        "focus_min": 25,
+        "break_min": 5,
+        "long_every": 4,
+        "long_break_min": 20,
+        "rounds": 0,              # 0 = 不限轮数
+        "remind_on_break": False,
+        "strict_break": False,
+    },
     "api": {
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-flash",

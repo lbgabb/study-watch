@@ -1151,6 +1151,58 @@ function pomoMsg(text, color) {
   if (box) { box.textContent = text || ''; box.style.color = color || 'var(--dim)'; }
 }
 
+// 把用户调好的数值存进 config.json —— 自定义一次，以后打开就还是你的节奏。
+// 没这一步的话，自定义只在浏览器内存里，刷新就回到 25/5。
+let pomoSaveTimer = null;
+function pomoSaveSoon() {
+  clearTimeout(pomoSaveTimer);
+  pomoSaveTimer = setTimeout(async () => {
+    try {
+      await api('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          edits: {
+            'plan.preset': pomoSetup.preset,
+            'plan.focus_min': pomoSetup.focus_min || 25,
+            'plan.break_min': pomoSetup.break_min || 5,
+            'plan.long_every': pomoSetup.long_every || 0,
+            'plan.long_break_min': pomoSetup.long_break_min || 0,
+            'plan.rounds': pomoSetup.rounds || 0,
+            'plan.remind_on_break': !!pomoSetup.remind_on_break,
+            'plan.strict_break': !!pomoSetup.strict_break,
+          },
+        }),
+      });
+      pomoMsg('已记住你的节奏（下次打开还是这个）', '#4cc97a');
+    } catch (e) {
+      pomoMsg('节奏没能保存：' + e.message, '#f2a65a');
+    }
+  }, 700);
+}
+
+// 用配置里的 plan.* 初始化表单（只做一次）
+async function pomoLoadSaved() {
+  try {
+    const c = await api('/api/config');
+    const v = c.values || {};
+    const saved = {
+      preset: v['plan.preset'] || 'pomodoro',
+      focus_min: v['plan.focus_min'],
+      break_min: v['plan.break_min'],
+      long_every: v['plan.long_every'],
+      long_break_min: v['plan.long_break_min'],
+      rounds: v['plan.rounds'] || 0,
+      remind_on_break: !!v['plan.remind_on_break'],
+      strict_break: !!v['plan.strict_break'],
+    };
+    pomoSetup = Object.assign({ note: pomoSetup.note || '' }, saved);
+    renderPomo(null);
+  } catch (e) {
+    /* 读不到就用内置默认，不影响使用 */
+  }
+}
+
 function renderPomo(d) {
   if (d) {
     pomoData = d.plan || { active: false };
@@ -1234,11 +1286,14 @@ function renderPomo(d) {
       b.title = pr.basis || '';
       b.onclick = () => {
         pomoSetup.preset = pr.key;
+        // 选预设 = 套用它的数值；但「自定义」不该抹掉你已经调好的数字
+        // （之前这里把自定义重置成 25/5，等于"点自定义反而丢掉自定义"）
         if (pr.key !== 'custom') {
           pomoSetup.focus_min = pr.focus_min;
           pomoSetup.break_min = pr.break_min;
           pomoSetup.long_every = pr.long_every;
           pomoSetup.long_break_min = pr.long_break_min;
+          pomoSaveSoon();
         }
         renderPomo(null);
       };
@@ -1263,7 +1318,8 @@ function renderPomo(d) {
       inp.value = pomoSetup[key];
       inp.onchange = () => {
         pomoSetup[key] = Math.max(0, Number(inp.value) || 0);
-        pomoSetup.preset = 'custom';
+        pomoSetup.preset = 'custom';       // 手改数值就等于自定义
+        pomoSaveSoon();
         renderPomo(null);
       };
       row1.appendChild(inp);
@@ -1280,7 +1336,10 @@ function renderPomo(d) {
     const rInp = document.createElement('input');
     rInp.type = 'number'; rInp.min = 0; rInp.value = pomoSetup.rounds || 0;
     rInp.title = '0 表示不限轮数，做到你手动停';
-    rInp.onchange = () => { pomoSetup.rounds = Math.max(0, Number(rInp.value) || 0); };
+    rInp.onchange = () => {
+      pomoSetup.rounds = Math.max(0, Number(rInp.value) || 0);
+      pomoSaveSoon();
+    };
     row2.appendChild(rInp);
     row2.appendChild(el('span', null, '（0 = 不限）｜主题'));
     const nInp = document.createElement('input');
@@ -1297,7 +1356,7 @@ function renderPomo(d) {
       const inp = document.createElement('input');
       inp.type = 'checkbox';
       inp.checked = !!pomoSetup[key];
-      inp.onchange = () => { pomoSetup[key] = inp.checked; };
+      inp.onchange = () => { pomoSetup[key] = inp.checked; pomoSaveSoon(); };
       lab.appendChild(inp);
       lab.appendChild(el('span', null, label));
       lab.title = title || '';
@@ -1477,6 +1536,8 @@ refresh();
 timer = setInterval(refresh, 5000);
 // 倒计时单独每秒走：5 秒轮询会让秒数一跳一跳
 setInterval(tickPomo, 1000);
+// 读回上次保存的节奏（自定义数值存在 config.json 里，不是浏览器内存）
+pomoLoadSaved();
 
 // 支持用 #settings 直接打开设置（方便收藏成"设置页"）
 if (location.hash === '#settings' || location.search.indexOf('settings=1') >= 0) {

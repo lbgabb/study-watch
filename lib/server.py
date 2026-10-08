@@ -288,18 +288,40 @@ def _int_or_none(v: Any) -> int | None:
 
 
 def _plan_action(action: str, body: dict) -> dict:
-    """专注计划（番茄钟）的开始 / 结束 / 跳过 / 清除。"""
+    """专注计划（番茄钟）的开始 / 结束 / 跳过 / 清除。
+
+    数值来源优先级：本次请求里传的 > config.json 的 plan 段（用户上次调好的）> 预设默认。
+    这样"自定义一次，以后就按你的来"，不用每次重填。
+    """
     if action == "start":
+        saved = load_config().get("plan") or {}
+        preset = str(body.get("preset") or saved.get("preset") or "pomodoro")
+
+        def pick(key: str, fallback: Any) -> Any:
+            """请求里有就用请求的；否则用保存的；否则用兜底。"""
+            v = _int_or_none(body.get(key))
+            if v is not None:
+                return v
+            v = _int_or_none(saved.get(key))
+            return v if v is not None else fallback
+
+        base = plan.PRESETS.get(preset) or plan.PRESETS["pomodoro"]
+        rounds = _int_or_none(body.get("rounds"))
+        if rounds is None:
+            rounds = int(saved.get("rounds") or 0)
+
         p = plan.start(
-            str(body.get("preset") or "pomodoro"),
-            target_rounds=_int_or_none(body.get("rounds")) or 0,
-            focus_min=_int_or_none(body.get("focus_min")),
-            break_min=_int_or_none(body.get("break_min")),
-            long_every=_int_or_none(body.get("long_every")),
-            long_break_min=_int_or_none(body.get("long_break_min")),
+            preset,
+            target_rounds=rounds,
+            focus_min=pick("focus_min", base["focus_min"]),
+            break_min=pick("break_min", base["break_min"]),
+            long_every=(0 if body.get("long_every") == 0 else
+                        pick("long_every", base["long_every"])),
+            long_break_min=(0 if body.get("long_break_min") == 0 else
+                            pick("long_break_min", base["long_break_min"])),
             note=str(body.get("note") or "").strip()[:80],
-            remind_on_break=bool(body.get("remind_on_break")),
-            strict_break=bool(body.get("strict_break")),
+            remind_on_break=bool(body.get("remind_on_break", saved.get("remind_on_break"))),
+            strict_break=bool(body.get("strict_break", saved.get("strict_break"))),
         )
         msg = f"已开始：{p.phase_label()} {p.phase_sec // 60} 分钟"
         if p.target_rounds:
@@ -495,6 +517,10 @@ HOT_KEYS = {
     "reminder.mute_after_remind_sec": "提醒后安静时长",
     "reminder.off_task_streak_required": "连续几次才提醒", "reminder.auto_close_sec": "提醒窗自动关闭",
     "privacy.save_api_raw": "保存模型原始回复",
+    "plan.preset": "番茄钟预设", "plan.focus_min": "专注时长", "plan.break_min": "休息时长",
+    "plan.long_every": "长休间隔", "plan.long_break_min": "长休时长",
+    "plan.rounds": "计划轮数", "plan.remind_on_break": "休息时是否提醒",
+    "plan.strict_break": "休息是否计入统计",
 }
 
 # 允许通过面板修改的字段（白名单，避免误写坏配置）
@@ -511,6 +537,10 @@ EDITABLE: dict[str, type] = {
     "api.base_url": str, "api.model": str, "api.api_key_env": str,
     "api.credentials_file": str, "api.timeout_sec": int,
     "api.temperature": float, "api.max_tokens": int,
+    # 番茄钟的默认节奏（用户自定义的数值靠这些项持久化）
+    "plan.preset": str, "plan.focus_min": int, "plan.break_min": int,
+    "plan.long_every": int, "plan.long_break_min": int, "plan.rounds": int,
+    "plan.remind_on_break": bool, "plan.strict_break": bool,
 }
 
 VALID_DETAIL = ("low", "high", "auto")
@@ -613,6 +643,15 @@ def read_config_for_ui() -> dict[str, Any]:
             "api.timeout_sec": cfg["api"].get("timeout_sec", 90),
             "api.temperature": cfg["api"].get("temperature", 0),
             "api.max_tokens": cfg["api"].get("max_tokens", 900),
+            # 番茄钟：用户上次的选择（自定义数值也在这里，重启后不丢）
+            "plan.preset": (cfg.get("plan") or {}).get("preset", "pomodoro"),
+            "plan.focus_min": (cfg.get("plan") or {}).get("focus_min", 25),
+            "plan.break_min": (cfg.get("plan") or {}).get("break_min", 5),
+            "plan.long_every": (cfg.get("plan") or {}).get("long_every", 4),
+            "plan.long_break_min": (cfg.get("plan") or {}).get("long_break_min", 20),
+            "plan.rounds": (cfg.get("plan") or {}).get("rounds", 0),
+            "plan.remind_on_break": (cfg.get("plan") or {}).get("remind_on_break", False),
+            "plan.strict_break": (cfg.get("plan") or {}).get("strict_break", False),
         },
         "key": vision.key_status(cfg),
         "config_path": str(CONFIG_PATH),

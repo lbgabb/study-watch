@@ -127,6 +127,80 @@ def logic_tests() -> None:
     P.clear()
     check("计划文件已清除", P.load() is None)
 
+    print()
+    print("=== 7b) 自定义节奏要能持久化（用户调好的数值不该丢）===")
+    from lib.config import CONFIG_PATH, load_config
+    import urllib.request
+    backup = CONFIG_PATH.read_bytes()
+    try:
+        # config.json 里有没有 plan 段取决于"用户有没有调过"，
+        # 所以这里检查的是**合并后的生效配置**（load_config 会把默认值并进来）
+        eff = load_config().get("plan") or {}
+        check("生效配置里有 plan 段（存用户节奏）", bool(eff),
+              json.dumps(eff, ensure_ascii=False)[:90])
+        check("plan 段含 focus_min / break_min",
+              "focus_min" in eff and "break_min" in eff, str(list(eff)[:6]))
+
+        # 模拟用户把节奏改成 45/12，并保存
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        cfg["plan"] = {"preset": "custom", "focus_min": 45, "break_min": 12,
+                       "long_every": 3, "long_break_min": 25, "rounds": 5,
+                       "remind_on_break": True, "strict_break": False}
+        CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # 不带任何数值地"开始计划"——应当采用保存的节奏，而不是预设默认
+        req = urllib.request.Request(
+            "http://127.0.0.1:8770/api/plan",
+            data=json.dumps({"action": "start"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        r = json.loads(urllib.request.urlopen(req, timeout=15).read())
+        got = r.get("plan") or {}
+        check("不带数值开始时会采用保存的节奏", got.get("focus_min") == 45
+              and got.get("break_min") == 12,
+              f"{got.get('focus_min')}/{got.get('break_min')}（期望 45/12）")
+        check("轮数也采用保存值", got.get("target_rounds") == 5, str(got.get("target_rounds")))
+        check("长休规则采用保存值", got.get("long_every") == 3,
+              str(got.get("long_every")))
+        check("休息提醒开关采用保存值", got.get("remind_on_break") is True,
+              str(got.get("remind_on_break")))
+
+        # 请求里显式传的应当优先于保存值
+        req2 = urllib.request.Request(
+            "http://127.0.0.1:8770/api/plan",
+            data=json.dumps({"action": "start", "focus_min": 30,
+                             "break_min": 6}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        r2 = json.loads(urllib.request.urlopen(req2, timeout=15).read())
+        got2 = r2.get("plan") or {}
+        check("请求里显式指定时优先用它", got2.get("focus_min") == 30
+              and got2.get("break_min") == 6,
+              f"{got2.get('focus_min')}/{got2.get('break_min')}（期望 30/6）")
+
+        # 通过设置接口保存自定义节奏（这是前端实际走的路径）
+        req4 = urllib.request.Request(
+            "http://127.0.0.1:8770/api/config",
+            data=json.dumps({"edits": {"plan.preset": "custom", "plan.focus_min": 40,
+                                       "plan.break_min": 8}}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        rc = json.loads(urllib.request.urlopen(req4, timeout=15).read())
+        check("设置接口能保存自定义节奏", rc.get("ok") is True, rc.get("message", "")[:70])
+        on_disk = json.loads(CONFIG_PATH.read_text(encoding="utf-8")).get("plan") or {}
+        check("已写进 config.json（不是只留内存）",
+              on_disk.get("focus_min") == 40 and on_disk.get("break_min") == 8,
+              json.dumps({k: on_disk.get(k) for k in ("preset", "focus_min", "break_min")},
+                         ensure_ascii=False))
+
+        # 清掉计划
+        req3 = urllib.request.Request(
+            "http://127.0.0.1:8770/api/plan",
+            data=json.dumps({"action": "clear"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req3, timeout=15).read()
+    finally:
+        CONFIG_PATH.write_bytes(backup)
+        check("测试后 config.json 已逐字节还原",
+              CONFIG_PATH.read_bytes() == backup, f"{len(backup)} 字节")
+
 
 # ---------------------------------------------------------------- 2. 界面
 def ui_tests(base: str, shot: Path | None = None) -> None:
@@ -145,6 +219,68 @@ def ui_tests(base: str, shot: Path | None = None) -> None:
         presets = cdp.eval_js(
             "Array.from(document.querySelectorAll('#pomo .presets button')).map(b=>b.textContent)")
         check("预设按钮已渲染", isinstance(presets, list) and len(presets) >= 4, str(presets))
+
+        # 用户自定义的权力：调了数值要能存下来，刷新后还在
+        print()
+        print("  --- 自定义节奏的持久化（刷新后还在不在）---")
+        cdp.eval_js("""(() => {
+            const nums = document.querySelectorAll('#pomo .row input[type=number]');
+            nums[0].value = '37'; nums[0].dispatchEvent(new Event('change'));
+            nums[1].value = '9';  nums[1].dispatchEvent(new Event('change'));
+        })()""")
+        time.sleep(2.0)          # 等前端把改动存进 config.json（防抖 0.7s）
+        on_disk = json.loads(
+            (ROOT / "config.json").read_text(encoding="utf-8")).get("plan") or {}
+        check("改数值后自动写进 config.json",
+              on_disk.get("focus_min") == 37 and on_disk.get("break_min") == 9,
+              json.dumps({k: on_disk.get(k) for k in ("preset", "focus_min", "break_min")},
+                         ensure_ascii=False))
+
+        # 重新加载页面（等价于关掉再打开），看表单是否还是 37/9
+        cdp.call("Page.reload", {"ignoreCache": True})
+        time.sleep(4)
+        vals = cdp.eval_js("""(() => {
+            const nums = document.querySelectorAll('#pomo .row input[type=number]');
+            return nums.length ? [nums[0].value, nums[1].value] : null;
+        })()""")
+        check("刷新后表单仍是用户改的值（没有回到 25/5）",
+              isinstance(vals, list) and vals[0] == '37' and vals[1] == '9', str(vals))
+        sel = cdp.eval_js("""(() => {
+            const b = document.querySelector('#pomo .presets button.on');
+            return b ? b.textContent : null;
+        })()""")
+        check("预设高亮为「自定义」", sel is None or "自定义" in str(sel), str(sel))
+
+        print()
+        print("  --- 点「自定义」不该抹掉已调好的数值 ---")
+        cdp.eval_js("""(() => {
+            const b = Array.from(document.querySelectorAll('#pomo .presets button'))
+                .find(x => x.textContent.indexOf('自定义') >= 0);
+            if (b) b.click();
+        })()""")
+        time.sleep(0.8)
+        vals2 = cdp.eval_js("""(() => {
+            const nums = document.querySelectorAll('#pomo .row input[type=number]');
+            return nums.length ? [nums[0].value, nums[1].value] : null;
+        })()""")
+        check("点「自定义」保留原数值（不再重置成 25/5）",
+              isinstance(vals2, list) and vals2[0] == '37' and vals2[1] == '9', str(vals2))
+
+        print()
+        print("  --- 换预设则套用该预设的数值 ---")
+        cdp.eval_js("""(() => {
+            const b = Array.from(document.querySelectorAll('#pomo .presets button'))
+                .find(x => x.textContent.indexOf('15 / 3') >= 0);
+            if (b) b.click();
+        })()""")
+        time.sleep(1.2)
+        vals3 = cdp.eval_js("""(() => {
+            const nums = document.querySelectorAll('#pomo .row input[type=number]');
+            return nums.length ? [nums[0].value, nums[1].value] : null;
+        })()""")
+        check("选 15/3 预设后数值跟着变", isinstance(vals3, list)
+              and vals3[0] == '15' and vals3[1] == '3', str(vals3))
+
         check("有开始按钮",
               cdp.eval_js("""Array.from(document.querySelectorAll('#pomo button'))
                               .some(b=>b.textContent.indexOf('开始专注')>=0)"""))
@@ -221,6 +357,17 @@ def ui_tests(base: str, shot: Path | None = None) -> None:
             base + "/api/plan", data=json.dumps({"action": "clear"}).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
         urllib.request.urlopen(req, timeout=10).read()
+
+        # UI 测试改过 focus/break（改成 1 分钟好快点跑完），这里恢复成常用值，
+        # 否则"自定义"会一直停在 1 分钟，用户下次打开会莫名其妙
+        req2 = urllib.request.Request(
+            base + "/api/config",
+            data=json.dumps({"edits": {"plan.preset": "pomodoro", "plan.focus_min": 25,
+                                       "plan.break_min": 5, "plan.long_every": 4,
+                                       "plan.long_break_min": 20, "plan.rounds": 0}}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req2, timeout=15).read()
+        print("  已把节奏恢复为 25/5（UI 测试期间改成了 1/1）")
     finally:
         try:
             proc.terminate(); proc.wait(timeout=10)
