@@ -1,0 +1,897 @@
+'use strict';
+
+const CAT_COLORS = {
+  '学习': '#4cc97a', '工作': '#5aa9e6', '娱乐': '#f2789f', '社交': '#9d7bea',
+  '游戏': '#f2a65a', '购物': '#4dd0c1', '闲置': '#6b7a8d', '其他': '#8fa6bf'
+};
+const OFF_COLOR = '#f2789f';
+const NS = 'http://www.w3.org/2000/svg';
+
+let busy = false;
+
+// ---------- 小工具 ----------
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function svgEl(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in (attrs || {})) e.setAttribute(k, attrs[k]);
+  return e;
+}
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  if (h) return h + ' 小时 ' + String(m).padStart(2, '0') + ' 分';
+  if (m) return m + ' 分 ' + String(sec % 60).padStart(2, '0') + ' 秒';
+  return sec + ' 秒';
+}
+function fmtClock(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso.slice(11, 19);
+  return d.toTimeString().slice(0, 8);
+}
+function pct(x) { return Math.round((x || 0) * 100); }
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ cache: 'no-store' }, opts || {}));
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+// ---------- 顶部状态 ----------
+function renderStatus(d) {
+  const dot = document.getElementById('dot');
+  const txt = document.getElementById('statusText');
+  const state = d.state || (d.running ? 'running' : 'stopped');
+  const pids = (d.pids || []).join(', ');
+  dot.className = 'dot ' + (state === 'stopped' ? 'off' : state === 'paused' ? 'paused' : 'on');
+  txt.textContent = state === 'running' ? '监督中（PID ' + pids + '）'
+    : state === 'paused' ? '已暂停（进程待命）'
+    : '未在监督';
+  document.getElementById('updated').textContent = '更新于 ' + new Date().toLocaleTimeString();
+}
+
+function renderWarn(d) {
+  const box = document.getElementById('warnBox');
+  box.innerHTML = '';
+  const msgs = [];
+  if (!d.key_ok) msgs.push('没有找到 API key，判定会失败。请检查 ' + (d.key_hint || 'DEEPSEEK_API_KEY') + '。');
+  if (d.today.checks === 0 && d.running) msgs.push('还没产生判定记录，等第一个周期（约 ' + d.interval_sec + ' 秒）即可。');
+  for (const m of msgs) box.appendChild(el('div', 'warn', m));
+}
+
+// ---------- 概览卡片 ----------
+function renderCards(d) {
+  const t = d.today;
+  const wrap = document.getElementById('cards');
+  wrap.innerHTML = '';
+
+  const focus = t.checks ? pct(t.on_task_rate) : 0;
+  const cardFocus = el('div', 'card');
+  cardFocus.appendChild(el('div', 'sub', '今日专注率'));
+  const m1 = el('div', 'metric');
+  m1.appendChild(document.createTextNode(focus + ' %'));
+  cardFocus.appendChild(m1);
+  cardFocus.appendChild(el('div', 'sub', '在状态 ' + fmtDur(t.on_task_sec) + ' · 分心 ' + fmtDur(t.off_task_sec)));
+  wrap.appendChild(cardFocus);
+
+  const c2 = el('div', 'card');
+  c2.appendChild(el('div', 'sub', '覆盖时长'));
+  c2.appendChild(el('div', 'metric', fmtDur(t.span_sec)));
+  c2.appendChild(el('div', 'sub', '共 ' + t.checks + ' 次判定' + (t.skipped ? ' · 跳过 ' + t.skipped + ' 次' : '')));
+  wrap.appendChild(c2);
+
+  const c3 = el('div', 'card');
+  c3.appendChild(el('div', 'sub', '分心次数'));
+  c3.appendChild(el('div', 'metric', String(t.off_events.length)));
+  c3.appendChild(el('div', 'sub', t.off_events.length ? '最近一次 ' + fmtClock(t.off_events[t.off_events.length - 1].ts) : '今天没分心，稳'));
+  wrap.appendChild(c3);
+
+  const c4 = el('div', 'card');
+  c4.appendChild(el('div', 'sub', '今日花费'));
+  c4.appendChild(el('div', 'metric', '$' + (t.cost_usd || 0).toFixed(4)));
+  c4.appendChild(el('div', 'sub', '平均延迟 ' + (t.avg_latency_ms || 0) + ' ms' + (t.errors ? ' · 失败 ' + t.errors : '')));
+  wrap.appendChild(c4);
+
+  // 此刻在做什么
+  const card = el('div', 'card');
+  card.style.gridColumn = '1 / -1';
+  card.appendChild(el('h2', null, '现在'));
+  const last = t.last;
+  if (!last) {
+    card.appendChild(el('div', 'empty', '还没有判定记录'));
+  } else {
+    const now = el('div', 'now');
+    const badge = el('span', 'badge', (last.on_task ? '在状态 · ' : '分心 · ') + (last.category || '其他'));
+    now.appendChild(badge);
+    const right = el('div');
+    right.appendChild(el('div', 'txt', last.activity || '（无描述）'));
+    const b = el('div', 'basis', '依据：' + (last.basis || '—'));
+    right.appendChild(b);
+    const meta = el('div', 'basis',
+      fmtClock(last.ts) + ' · ' + (last.process || '未知程序') +
+      ' · 置信度 ' + pct(last.confidence) + '%' +
+      (last.process === '' ? '' : ' · 花费 $' + (last.cost_usd || 0).toFixed(4)));
+    right.appendChild(meta);
+    now.appendChild(right);
+    card.appendChild(now);
+  }
+  wrap.appendChild(card);
+}
+
+// 时间轴/周图都按容器实际像素宽画：viewBox 宽度 = 测得宽度，SVG 也按这个像素尺寸渲染，
+// 再配 max-width:100% 兜底（容器变窄时浏览器等比缩小，坐标仍然和时间一致）。
+function containerWidth(hostEl, min) {
+  return Math.max(min, Math.round(hostEl.clientWidth || 0));
+}
+
+function sizeSvg(svg, W, H) {
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  svg.style.width = W + 'px';
+  svg.style.maxWidth = '100%';
+  svg.style.height = H + 'px';
+}
+
+// ---------- 时间轴 ----------
+function renderTimeline(d) {
+  const host = document.getElementById('timeline');
+  host.innerHTML = '';
+  const items = d.today.timeline || [];
+  document.getElementById('tlTag').textContent = items.length ? items.length + ' 段' : '';
+  if (!items.length) {
+    host.appendChild(el('div', 'empty', '今天还没有判定记录'));
+    document.getElementById('tlLegend').innerHTML = '';
+    return;
+  }
+
+  const W = containerWidth(host, 620);
+  const H = 118, padL = 6, padR = 6, padT = 10;
+  const t0 = new Date(items[0].ts).getTime();
+  const t1 = new Date(items[items.length - 1].ts).getTime() + (items[items.length - 1].sec || 60) * 1000;
+  const span = Math.max(60000, t1 - t0);
+  const x = ms => padL + (ms - t0) / span * (W - padL - padR);
+
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H });
+  sizeSvg(svg, W, H);
+  svg.dataset.kind = 'timeline';
+
+  // 背景刻度（每小时一条）
+  const firstHour = new Date(t0); firstHour.setMinutes(0, 0, 0);
+  for (let t = firstHour.getTime(); t <= t1; t += 3600000) {
+    const px = x(t);
+    svg.appendChild(svgEl('line', { x1: px, y1: padT, x2: px, y2: H - 30, stroke: '#22303f', 'stroke-width': 1 }));
+    const label = svgEl('text', { x: px + 3, y: H - 16, fill: '#5d6f85', 'font-size': 11 });
+    label.textContent = new Date(t).toTimeString().slice(0, 2) + ':00';
+    svg.appendChild(label);
+  }
+
+  // 每个判定一段，高度按专注/分心区分
+  for (const it of items) {
+    const start = new Date(it.ts).getTime();
+    const w = Math.max(2, x(start + (it.sec || 60) * 1000) - x(start));
+    const onTask = it.on_task;
+    const color = onTask ? (CAT_COLORS[it.category] || '#4cc97a') : OFF_COLOR;
+    const h = onTask ? 34 : 20;
+    const y = padT + (onTask ? 0 : 40);
+    const rect = svgEl('rect', {
+      x: x(start), y: y, width: w, height: h, rx: 3,
+      fill: color, opacity: onTask ? .92 : .85
+    });
+    const tip = svgEl('title');
+    tip.textContent = fmtClock(it.ts) + '（' + fmtDur(it.sec) + '）\n' +
+      (it.on_task ? '在状态' : '分心') + ' · ' + (it.category || '') + '\n' +
+      (it.activity || '') + '\n依据：' + (it.basis || '');
+    rect.appendChild(tip);
+    svg.appendChild(rect);
+  }
+
+  // 轴
+  svg.appendChild(svgEl('line', { x1: padL, y1: H - 30, x2: W - padR, y2: H - 30, stroke: '#2a3a4d', 'stroke-width': 1 }));
+  const labOn = svgEl('text', { x: padL, y: H - 4, fill: '#4cc97a', 'font-size': 11 });
+  labOn.textContent = '上行：在状态（按类别着色）';
+  const labOff = svgEl('text', { x: 220, y: H - 4, fill: OFF_COLOR, 'font-size': 11 });
+  labOff.textContent = '下行：分心';
+  svg.appendChild(labOn); svg.appendChild(labOff);
+  host.appendChild(svg);
+
+  // 图例：出现过的类别
+  const used = [...new Set(items.map(i => i.category))];
+  const lg = document.getElementById('tlLegend');
+  lg.innerHTML = '';
+  for (const c of used) {
+    const s = el('span');
+    const i = el('i'); i.style.background = CAT_COLORS[c] || '#8fa6bf';
+    s.appendChild(i); s.appendChild(document.createTextNode(c));
+    lg.appendChild(s);
+  }
+  const sp = el('span');
+  const si = el('i'); si.style.background = OFF_COLOR;
+  sp.appendChild(si); sp.appendChild(document.createTextNode('分心'));
+  lg.appendChild(sp);
+}
+
+// ---------- 分心记录明细 ----------
+function renderOffList(d) {
+  const host = document.getElementById('offlist');
+  host.innerHTML = '';
+  const evs = (d.today.off_events || []).slice().reverse();
+  if (!evs.length) {
+    host.appendChild(el('div', 'sub', '今天还没有分心记录。'));
+    return;
+  }
+  const head = el('div', 'sub', '分心记录（' + evs.length + ' 条，最新在前）');
+  head.style.marginBottom = '4px';
+  host.appendChild(head);
+  for (const e of evs.slice(0, 12)) {
+    const row = el('div', 'offrow');
+    row.appendChild(el('span', 't', fmtClock(e.ts)));
+    const c = el('span', 'c');
+    c.appendChild(el('span', 'pill off', e.category || '其他'));
+    row.appendChild(c);
+    const a = el('div', 'a');
+    a.appendChild(el('div', null, e.activity || ''));
+    if (e.basis) a.appendChild(el('div', 'b', '依据：' + e.basis));
+    row.appendChild(a);
+    host.appendChild(row);
+  }
+}
+
+// ---------- 环形图 ----------
+function renderDonut(d) {
+  const host = document.getElementById('donut');
+  host.innerHTML = '';
+  const cats = d.today.cat_sec || [];
+  if (!cats.length) {
+    host.appendChild(el('div', 'empty', '暂无数据'));
+    document.getElementById('donutLegend').innerHTML = '';
+    return;
+  }
+  const total = cats.reduce((s, c) => s + c.sec, 0);
+  const SIZE = 190, R = 74, r = 46, cx = SIZE / 2, cy = SIZE / 2;
+  const svg = svgEl('svg', { viewBox: '0 0 ' + SIZE + ' ' + SIZE });
+  svg.style.maxWidth = SIZE + 'px';
+  svg.style.margin = '0 auto';
+
+  let acc = -Math.PI / 2;
+  for (const c of cats) {
+    const ang = c.sec / total * Math.PI * 2;
+    const a0 = acc, a1 = acc + ang;
+    acc = a1;
+    const large = ang > Math.PI ? 1 : 0;
+    const p = (rad, a) => [cx + rad * Math.cos(a), cy + rad * Math.sin(a)];
+    const [x0, y0] = p(R, a0), [x1, y1] = p(R, a1), [x2, y2] = p(r, a1), [x3, y3] = p(r, a0);
+    const path = svgEl('path', {
+      d: `M ${x0} ${y0} A ${R} ${R} 0 ${large} 1 ${x1} ${y1} L ${x2} ${y2} A ${r} ${r} 0 ${large} 0 ${x3} ${y3} Z`,
+      fill: CAT_COLORS[c.cat] || '#8fa6bf', stroke: '#18222f', 'stroke-width': 1.5
+    });
+    const tip = svgEl('title');
+    tip.textContent = c.cat + ' · ' + fmtDur(c.sec) + '（' + Math.round(c.sec / total * 100) + '%）';
+    path.appendChild(tip);
+    svg.appendChild(path);
+  }
+  const t1 = svgEl('text', { x: cx, y: cy - 2, 'text-anchor': 'middle', fill: '#e8eef6', 'font-size': 19, 'font-weight': 600 });
+  t1.textContent = pct(d.today.on_task_rate) + '%';
+  const t2 = svgEl('text', { x: cx, y: cy + 17, 'text-anchor': 'middle', fill: '#8fa6bf', 'font-size': 11 });
+  t2.textContent = '在状态占比';
+  svg.appendChild(t1); svg.appendChild(t2);
+  host.appendChild(svg);
+
+  const lg = document.getElementById('donutLegend');
+  lg.innerHTML = '';
+  for (const c of cats) {
+    const s = el('span');
+    const i = el('i'); i.style.background = CAT_COLORS[c.cat] || '#8fa6bf';
+    s.appendChild(i);
+    s.appendChild(document.createTextNode(c.cat + ' ' + fmtDur(c.sec)));
+    lg.appendChild(s);
+  }
+}
+
+// ---------- 近 7 天 ----------
+function renderWeek(d) {
+  const host = document.getElementById('week');
+  host.innerHTML = '';
+  const days = d.days || [];
+  if (!days.length) { host.appendChild(el('div', 'empty', '暂无历史')); return; }
+
+  const W = containerWidth(host, 420);
+  const H = 150, padL = 40, padB = 26, padT = 8;
+  const maxSec = Math.max(600, ...days.map(x => x.on_task_sec + x.off_task_sec));
+  const bw = (W - padL - 8) / days.length;
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H });
+  sizeSvg(svg, W, H);
+  svg.dataset.kind = 'week';
+
+  // 网格
+  for (let k = 0; k <= 2; k++) {
+    const v = maxSec * k / 2;
+    const y = H - padB - (v / maxSec) * (H - padB - padT);
+    svg.appendChild(svgEl('line', { x1: padL, y1: y, x2: W - 8, y2: y, stroke: '#22303f', 'stroke-width': 1 }));
+    const t = svgEl('text', { x: padL - 6, y: y + 4, 'text-anchor': 'end', fill: '#5d6f85', 'font-size': 10 });
+    t.textContent = (v / 3600).toFixed(1) + 'h';
+    svg.appendChild(t);
+  }
+
+  days.forEach((day, i) => {
+    const x = padL + i * bw + bw * 0.18;
+    const w = bw * 0.64;
+    const hOn = (day.on_task_sec / maxSec) * (H - padB - padT);
+    const hOff = (day.off_task_sec / maxSec) * (H - padB - padT);
+    const yOff = H - padB - hOff;
+    const yOn = yOff - hOn;
+    if (!day.checks) {
+      const t = svgEl('text', { x: x + w / 2, y: H - padB - 6, 'text-anchor': 'middle', fill: '#3d4d60', 'font-size': 10 });
+      t.textContent = '无';
+      svg.appendChild(t);
+    } else {
+      const rOn = svgEl('rect', { x: x, y: yOn, width: w, height: Math.max(1, hOn), rx: 3, fill: '#4cc97a' });
+      const tipOn = svgEl('title');
+      tipOn.textContent = day.date + ' 在状态 ' + fmtDur(day.on_task_sec) + ' · 分心 ' + fmtDur(day.off_task_sec) +
+        ' · 专注率 ' + pct(day.on_task_rate) + '% · ' + day.checks + ' 次判定';
+      rOn.appendChild(tipOn);
+      svg.appendChild(rOn);
+      if (hOff > 0.5) {
+        const rOff = svgEl('rect', { x: x, y: yOff, width: w, height: Math.max(1, hOff), rx: 3, fill: '#f2789f' });
+        const tipOff = svgEl('title');
+        tipOff.textContent = day.date + ' 分心 ' + fmtDur(day.off_task_sec);
+        rOff.appendChild(tipOff);
+        svg.appendChild(rOff);
+      }
+    }
+    const lab = svgEl('text', { x: x + w / 2, y: H - 8, 'text-anchor': 'middle', fill: '#8fa6bf', 'font-size': 10 });
+    lab.textContent = day.date.slice(5);
+    svg.appendChild(lab);
+  });
+  host.appendChild(svg);
+}
+
+// ---------- 分心来源 ----------
+function renderProcs(d) {
+  const host = document.getElementById('procs');
+  host.innerHTML = '';
+  const procs = d.today.proc_off || [];
+  if (!procs.length) { host.appendChild(el('div', 'empty', '今天没有分心记录 🎉')); return; }
+  const max = Math.max(...procs.map(p => p.sec));
+  for (const p of procs) {
+    const row = el('div', 'kv');
+    const name = el('span', null, p.name);
+    const right = el('span', null, fmtDur(p.sec));
+    row.appendChild(name); row.appendChild(right);
+    host.appendChild(row);
+    const bar = el('div');
+    bar.style.cssText = 'height:6px;border-radius:4px;background:#22303f;margin:2px 0 8px';
+    const fill = el('div');
+    fill.style.cssText = 'height:6px;border-radius:4px;background:' + OFF_COLOR + ';width:' + (p.sec / max * 100) + '%';
+    bar.appendChild(fill);
+    host.appendChild(bar);
+  }
+}
+
+// ---------- 概况 ----------
+function renderMeta(d) {
+  const host = document.getElementById('meta');
+  host.innerHTML = '';
+  const t = d.today;
+  const rows = [
+    ['判定间隔', d.interval_sec + ' 秒'],
+    ['累计判定', t.checks + ' 次'],
+    ['失败 / 跳过', t.errors + ' / ' + t.skipped + ' 次'],
+    ['平均延迟', (t.avg_latency_ms || 0) + ' ms'],
+    ['今日 tokens', (t.tokens_in || 0) + ' 入 / ' + (t.tokens_out || 0) + ' 出'],
+    ['今日花费', '$' + (t.cost_usd || 0).toFixed(4)],
+    ['截图保存', d.save_shots ? '已开启（data/shots）' : '未保存（仅内存）'],
+    ['模型', d.model],
+  ];
+  for (const [k, v] of rows) {
+    const row = el('div', 'kv');
+    row.appendChild(el('span', null, k));
+    row.appendChild(el('span', null, String(v)));
+    host.appendChild(row);
+  }
+}
+
+// ---------- 最近判定 ----------
+function renderRecent(d) {
+  const tbl = document.getElementById('recent');
+  tbl.innerHTML = '';
+  const recs = (d.today.recent || []).slice().reverse();
+  document.getElementById('recentTag').textContent = d.today.checks ? '共 ' + d.today.checks + ' 次' : '';
+  if (!recs.length) {
+    tbl.appendChild(el('div', 'empty', '暂无记录'));
+    return;
+  }
+  const thead = el('thead');
+  const tr = el('tr');
+  ['时间', '判定', '在做什么', '程序'].forEach(h => tr.appendChild(el('th', null, h)));
+  thead.appendChild(tr); tbl.appendChild(thead);
+  const tb = el('tbody');
+  for (const r of recs) {
+    const row = el('tr');
+    row.appendChild(el('td', 'time', fmtClock(r.ts)));
+    const td2 = el('td', 'cat');
+    const pill = el('span', 'pill ' + (r.on_task ? 'on' : 'off'), (r.on_task ? '在状态' : '分心') + ' · ' + (r.category || ''));
+    td2.appendChild(pill);
+    row.appendChild(td2);
+    const td3 = el('td');
+    td3.appendChild(document.createTextNode(r.activity || ''));
+    if (r.basis) {
+      const b = el('div', 'sub', '依据：' + r.basis);
+      td3.appendChild(b);
+    }
+    row.appendChild(td3);
+    row.appendChild(el('td', 'time', r.process || ''));
+    tb.appendChild(row);
+  }
+  tbl.appendChild(tb);
+}
+
+// ---------- 控制面板 ----------
+function renderControl(d) {
+  const state = d.state || (d.running ? 'running' : 'stopped');
+  const box = document.getElementById('cstate');
+  const txt = document.getElementById('cstateText');
+  const sub = document.getElementById('cstateSub');
+  const btns = document.getElementById('cbtns');
+  const note = document.getElementById('cnote');
+
+  box.className = 'cstate ' + state;
+  if (state === 'running') {
+    txt.textContent = '监督中';
+    sub.textContent = '每 ' + d.interval_sec + ' 秒截屏判定一次' +
+      (d.pids && d.pids.length ? '（PID ' + d.pids.join(', ') + '）' : '');
+  } else if (state === 'paused') {
+    txt.textContent = '已暂停';
+    sub.textContent = '进程还在待命，不会截图也不会花钱；点「继续监督」即可恢复';
+  } else {
+    txt.textContent = '未在监督';
+    sub.textContent = '点「开始监督」就会在后台跑起来，关掉这个网页也不受影响';
+  }
+
+  btns.innerHTML = '';
+  const mk = (label, cls, path, confirmText) => {
+    const b = el('button', cls, label);
+    b.disabled = busy;
+    b.onclick = () => {
+      if (confirmText && !window.confirm(confirmText)) return;
+      doAction(path, b);
+    };
+    btns.appendChild(b);
+    return b;
+  };
+
+  if (state === 'stopped') {
+    mk('开始监督', 'primary', '/api/start');
+  } else if (state === 'running') {
+    mk('暂停判定', null, '/api/pause');
+    mk('停止监督', 'danger', '/api/stop', '停止后本次监督结束，要重新开始请再点「开始监督」。确定停止？');
+  } else {
+    mk('继续监督', 'primary', '/api/resume');
+    mk('停止监督', 'danger', '/api/stop', '停止后本次监督结束，要重新开始请再点「开始监督」。确定停止？');
+  }
+  mk('立即判一次', null, '/api/once');
+  mk('导出 Markdown', null, '/api/export');
+
+  // 设置入口就放在控制面板里
+  const bCfg = el('button', null, '打开设置');
+  bCfg.disabled = busy;
+  bCfg.onclick = openDrawer;
+  btns.appendChild(bCfg);
+
+  note.innerHTML =
+    '· 「暂停」只是不再判定，进程留着，恢复是瞬时的；「停止」是彻底结束监督进程。<br>' +
+    '· 「立即判一次」会真的截屏并调用一次 API（约 $0.0006）。<br>' +
+    '· 判定间隔、图片精度、学习目标、严格程度、提醒方式、<b>API 与模型</b>都在「打开设置」里改，不用碰配置文件。<br>' +
+    '· 网页关掉不影响监督；桌面的 <code>学习监督</code> 快捷方式启动的是同一个东西。';
+}
+
+async function doAction(path, btn) {
+  busy = true;
+  const old = btn.textContent;
+  btn.textContent = '处理中…';
+  try {
+    const r = await api(path, { method: 'POST' });
+    const box = document.getElementById('ctlMsg');
+    if (box) {
+      box.textContent = (r.message || (r.ok ? '完成' : '失败')) + (r.activity ? ' → ' + r.activity : '');
+      box.style.color = r.ok ? '#8fa6bf' : '#f2a65a';
+    }
+  } catch (e) {
+    const box = document.getElementById('ctlMsg');
+    if (box) { box.textContent = '请求失败：' + e.message; box.style.color = '#f2a65a'; }
+  } finally {
+    busy = false;
+    btn.textContent = old;
+    await refresh();
+  }
+}
+
+// ---------- 设置抽屉 ----------
+// 字段声明表：加一项设置只要在这里加一行。badge 决定显示"下一轮生效"还是"需重启"。
+const CFG_GROUPS = [
+  {
+    title: '判定节奏', note: '下一轮判定起生效',
+    fields: [
+      { k: 'interval_sec', t: 'number', label: '判定间隔（秒）', hint: '每隔这么久截屏判定一次；越大越省', min: 10 },
+      { k: 'idle_skip_sec', t: 'number', label: '空闲跳过阈值（秒）', hint: '超过这么久没有键鼠输入就不判定，也不计入统计' },
+      { k: 'capture.min_gap_sec', t: 'number', label: '两次判定最小间隔（秒）', hint: '兜底闸门，防止重启后连着打好几次' },
+      { k: 'capture.default_sec', t: 'number', label: '全局间隔覆盖（秒，留空=用上面的判定间隔）', hint: '按应用分配截图时，未命中任何规则的程序用哪个间隔' },
+    ],
+  },
+  {
+    title: '截屏与图片', 
+    fields: [
+      { k: 'detail', t: 'select', label: '图片精度', hot: true,
+        options: [['low', 'low — 服务端缩到 512，最省'], ['high', 'high — 保留原分辨率，能看清小字'], ['auto', 'auto — 由服务端决定']] },
+      { k: 'jpeg_quality', t: 'number', label: 'JPEG 质量（1-100）', hot: true, min: 1 },
+      { k: 'max_width', t: 'number', label: '截图缩放宽度（像素）', restart: true, hint: '2K 屏用 1600 够看；调小更省 token' },
+      { k: 'privacy.save_shots', t: 'bool', label: '把截图保存到磁盘', restart: true,
+        hint: '关掉时截图只在内存里编码后直接发 API，不落盘（默认关）' },
+      { k: 'privacy.shots_dir', t: 'text', label: '截图保存目录（相对项目根）', restart: true },
+      { k: 'privacy.save_api_raw', t: 'bool', label: '保存模型原始回复', hot: true, hint: '便于事后排查误判' },
+    ],
+  },
+  {
+    title: '判定标准',
+    fields: [
+      { k: 'judge.goal', t: 'textarea', label: '学习目标', hot: true,
+        hint: '写清楚你在准备什么，模型会照这个标准判断"算不算学习"' },
+      { k: 'judge.strictness', t: 'select', label: '严格程度', hot: true,
+        options: [['loose', 'loose — 宽松，获取知识信息就算学习'], ['normal', 'normal — 默认'],
+                  ['strict', 'strict — 严格，只认做题/读教材/写代码/上课']] },
+      { k: 'judge.extra_rules', t: 'list', label: '额外规则（每行一条）', hot: true,
+        hint: '例如：在 Anki 里背单词算学习' },
+      { k: 'judge.alias_rules', t: 'list', label: '归类约定（每行一条）', hot: true,
+        hint: '例如：看技术博客算学习' },
+    ],
+  },
+  {
+    title: '提醒',
+    fields: [
+      { k: 'reminder.enabled', t: 'bool', label: '启用提醒', hot: true },
+      { k: 'reminder.sound', t: 'bool', label: '提示音', hot: true },
+      { k: 'reminder.mute_after_remind_sec', t: 'number', label: '提醒一次后安静多久（秒）', hot: true },
+      { k: 'reminder.off_task_streak_required', t: 'number', label: '连续几次分心才提醒', hot: true, min: 1 },
+      { k: 'reminder.auto_close_sec', t: 'number', label: '提醒窗自动关闭（秒，0=不自动关）', hot: true, min: 0 },
+    ],
+  },
+  {
+    title: 'API / 模型', note: '改这里要重启监督才生效',
+    fields: [
+      { k: 'api.base_url', t: 'text', label: '接口地址 base_url', restart: true,
+        hint: '标准 OpenAI 兼容接口。注意有些服务商要带 /v1；代码会拼 /chat/completions' },
+      { k: 'api.model', t: 'text', label: '模型名', restart: true, hint: '必须是支持图片输入的视觉模型' },
+      { k: 'api.api_key_env', t: 'text', label: 'key 的环境变量名', restart: true, hint: '默认 DEEPSEEK_API_KEY' },
+      { k: 'api.credentials_file', t: 'text', label: '凭据文件路径', restart: true,
+        hint: '找不到环境变量时，从这个 yaml 里读 key（形如 refs: KEY: sk-xxx）' },
+      { k: 'api.timeout_sec', t: 'number', label: '请求超时（秒）', restart: true },
+      { k: 'api.max_tokens', t: 'number', label: '最大回复长度（token）', restart: true },
+      { k: 'api.temperature', t: 'number', label: 'temperature', restart: true, step: '0.1',
+        hint: '判定任务建议 0，输出更稳定' },
+    ],
+  },
+];
+
+let cfgCache = null;
+let cfgDirty = false;
+
+function openDrawer() {
+  document.getElementById('drawer').classList.add('show');
+  document.getElementById('backdrop').classList.add('show');
+  loadConfig();
+}
+function closeDrawer() {
+  if (cfgDirty && !window.confirm('有未保存的修改，确定关闭吗？')) return;
+  document.getElementById('drawer').classList.remove('show');
+  document.getElementById('backdrop').classList.remove('show');
+  cfgDirty = false;
+}
+
+async function loadConfig() {
+  const body = document.getElementById('cfgBody');
+  body.innerHTML = '<div class="empty">读取配置中…</div>';
+  try {
+    cfgCache = await api('/api/config');
+  } catch (e) {
+    body.innerHTML = '';
+    body.appendChild(el('div', 'empty', '读不到配置：' + e.message));
+    return;
+  }
+  document.getElementById('cfgPath').textContent = cfgCache.config_path || '';
+  renderConfigForm(cfgCache);
+  setCfgMsg('');
+  cfgDirty = false;
+}
+
+function setCfgMsg(text, color) {
+  const m = document.getElementById('cfgMsg');
+  m.textContent = text || '';
+  m.style.color = color || 'var(--dim)';
+}
+
+function fieldNode(f, values) {
+  const wrap = el('div', 'fld');
+  const val = values[f.k];
+
+  if (f.t === 'bool') {
+    const lab = el('label', 'sw');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !!val;
+    input.dataset.key = f.k;
+    input.dataset.type = 'bool';
+    input.onchange = () => { cfgDirty = true; };
+    lab.appendChild(input);
+    lab.appendChild(el('span', null, f.label));
+    wrap.appendChild(lab);
+    if (f.hint) wrap.appendChild(el('div', 'hint', f.hint));
+    return wrap;
+  }
+
+  const label = el('label');
+  label.appendChild(document.createTextNode(f.label));
+  if (f.restart) label.appendChild(el('span', 'badge', '需重启'));
+  else if (f.hot) label.appendChild(el('span', 'badge hot', '下一轮生效'));
+  wrap.appendChild(label);
+
+  if (f.t === 'select') {
+    const sel = document.createElement('select');
+    sel.dataset.key = f.k;
+    sel.dataset.type = 'str';
+    for (const [v, text] of f.options) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = text;
+      if (String(val) === v) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.onchange = () => { cfgDirty = true; };
+    wrap.appendChild(sel);
+  } else if (f.t === 'textarea' || f.t === 'list') {
+    const ta = document.createElement('textarea');
+    ta.dataset.key = f.k;
+    ta.dataset.type = f.t === 'list' ? 'list' : 'str';
+    ta.value = f.t === 'list' ? (val || []).join('\n') : (val || '');
+    ta.oninput = () => { cfgDirty = true; };
+    wrap.appendChild(ta);
+  } else {
+    const input = document.createElement('input');
+    input.type = f.t === 'number' ? 'number' : 'text';
+    input.dataset.key = f.k;
+    input.dataset.type = f.t === 'number' ? 'number' : 'str';
+    if (f.min !== undefined) input.min = f.min;
+    if (f.step) input.step = f.step;
+    input.value = (val === null || val === undefined) ? '' : val;
+    input.oninput = () => { cfgDirty = true; };
+    wrap.appendChild(input);
+  }
+  if (f.hint) wrap.appendChild(el('div', 'hint', f.hint));
+  return wrap;
+}
+
+function renderConfigForm(cfg) {
+  const body = document.getElementById('cfgBody');
+  body.innerHTML = '';
+  const values = cfg.values || {};
+
+  // API key 现状 + 新 key 输入
+  const keySec = el('div', 'sec');
+  const h = el('h4', null, 'API key');
+  keySec.appendChild(h);
+  const st = cfg.key || {};
+  const line = el('div', 'keyline');
+  const dot = el('div', 'dot2' + (st.ok ? '' : ' no'));
+  line.appendChild(dot);
+  line.appendChild(el('span', null, st.ok ? ('已配置：' + st.masked) : '未配置'));
+  line.appendChild(el('span', 'src', st.source ? ('来源：' + st.source) : ''));
+  keySec.appendChild(line);
+  const keyFld = el('div', 'fld');
+  keyFld.appendChild(el('label', null, '填写新的 key（留空表示不改）'));
+  const keyInput = document.createElement('input');
+  keyInput.type = 'password';
+  keyInput.id = 'newApiKey';
+  keyInput.placeholder = 'sk-...';
+  keyInput.dataset.type = 'key';
+  keyInput.oninput = () => { cfgDirty = true; };
+  keyFld.appendChild(keyInput);
+  const keyHint = el('div', 'hint',
+    '保存后会写到 data/secrets.json（不进版本库）。优先级：环境变量 > 面板保存 > 凭据文件。');
+  keyFld.appendChild(keyHint);
+  keySec.appendChild(keyFld);
+  body.appendChild(keySec);
+
+  for (const g of CFG_GROUPS) {
+    const sec = el('div', 'sec');
+    const head = el('h4');
+    head.appendChild(document.createTextNode(g.title));
+    if (g.note) head.appendChild(el('span', 'tag', g.note));
+    sec.appendChild(head);
+    for (const f of g.fields) sec.appendChild(fieldNode(f, values));
+    body.appendChild(sec);
+  }
+
+  // 截图策略只读提示（规则编辑留到后面单独做，这里先把现状说清楚）
+  const ruleSec = el('div', 'sec');
+  const rh = el('h4');
+  rh.appendChild(document.createTextNode('截图策略'));
+  rh.appendChild(el('span', 'tag', '按前台应用分配截图'));
+  ruleSec.appendChild(rh);
+  ruleSec.appendChild(el('div', 'hint',
+    `当前生效 ${cfg.rules_count} 条规则（游戏不判定、短视频切换即查、聊天/阅读/编码各有节奏）。` +
+    '规则的增删改暂时需要编辑 config.json 的 capture.rules —— 它是有序匹配的，做成表单容易搞乱优先级。'));
+  body.appendChild(ruleSec);
+}
+
+function collectEdits() {
+  const edits = {};
+  document.querySelectorAll('#cfgBody [data-key]').forEach(node => {
+    const key = node.dataset.key;
+    const type = node.dataset.type;
+    let v;
+    if (type === 'bool') v = node.checked;
+    else if (type === 'number') {
+      v = node.value.trim() === '' ? null : Number(node.value);
+      if (v !== null && !Number.isFinite(v)) v = node.value;   // 交给服务端报错
+    } else if (type === 'list') {
+      v = node.value.split('\n').map(s => s.trim()).filter(Boolean);
+    } else v = node.value;
+
+    // 和原值一致就不提交，避免无意义写入
+    const orig = (cfgCache && cfgCache.values) ? cfgCache.values[key] : undefined;
+    const same = (type === 'list')
+      ? JSON.stringify(v) === JSON.stringify(orig || [])
+      : (v === orig || (v === null && (orig === null || orig === undefined)));
+    if (!same) edits[key] = v;
+  });
+  return edits;
+}
+
+async function saveConfig() {
+  const edits = collectEdits();
+  const keyEl = document.getElementById('newApiKey');
+  const newKey = keyEl ? keyEl.value.trim() : '';
+  if (!Object.keys(edits).length && !newKey) {
+    setCfgMsg('没有改动。');
+    return;
+  }
+  const btn = document.getElementById('btnSaveCfg');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  setCfgMsg('正在保存…');
+  try {
+    const r = await api('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ edits, api_key: newKey || null }),
+    });
+    if (r.ok) {
+      if (keyEl) keyEl.value = '';
+      cfgDirty = false;
+      setCfgMsg(r.message, '#4cc97a');
+      await loadConfig();          // 重新读一遍，反映真实落盘结果
+      setCfgMsg(r.message, '#4cc97a');
+      refresh();                   // 状态区也可能受影响
+    } else {
+      setCfgMsg(r.message || '保存失败', '#f2a65a');
+    }
+  } catch (e) {
+    setCfgMsg('保存请求失败：' + e.message, '#f2a65a');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '保存设置';
+  }
+}
+
+async function testApi() {
+  const btn = document.getElementById('btnTestApi');
+  const keyEl = document.getElementById('newApiKey');
+  btn.disabled = true;
+  btn.textContent = '测试中…';
+  setCfgMsg('正在用一张内置小图测试（不截屏、不读你的屏幕）…');
+  try {
+    const edits = collectEdits();
+    const useEdits = {};
+    for (const k of ['api.base_url', 'api.model', 'api.api_key_env']) {
+      if (k in edits) useEdits[k] = edits[k];
+    }
+    const r = await api('/api/check-api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ edits: useEdits, api_key: (keyEl && keyEl.value.trim()) || null }),
+    });
+    if (r.ok) {
+      setCfgMsg(r.message + (r.seen ? ('；模型看到：' + r.seen) : ''), '#4cc97a');
+    } else {
+      setCfgMsg('连通失败：' + r.message, '#f2a65a');
+    }
+  } catch (e) {
+    setCfgMsg('测试请求失败：' + e.message, '#f2a65a');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '测试 API 连通';
+  }
+}
+
+document.getElementById('btnCloseDrawer').onclick = closeDrawer;
+document.getElementById('backdrop').onclick = closeDrawer;
+document.getElementById('btnSaveCfg').onclick = saveConfig;
+document.getElementById('btnTestApi').onclick = testApi;
+document.getElementById('btnReloadCfg').onclick = () => {
+  cfgDirty = false;
+  loadConfig();
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeDrawer();
+});
+
+// ---------- 主循环 ----------
+let timer = null;
+let offlineNotified = false;
+
+function showOffline() {
+  // 页面还开着但服务没了（服务进程退出、被回收、机器重启过）：要说人话，而不是 Failed to fetch
+  const dot = document.getElementById('dot');
+  const txt = document.getElementById('statusText');
+  if (dot) dot.className = 'dot off';
+  if (txt) txt.textContent = '仪表盘服务已断开';
+
+  const box = document.getElementById('warnBox');
+  if (box && !offlineNotified) {
+    box.innerHTML = '';
+    const w = el('div', 'warn');
+    w.innerHTML = '连不上仪表盘服务了——页面还开着，但后台服务已经退出。<br>' +
+      '解决办法：双击桌面上的 <b>「学习监督 仪表盘」</b> 快捷方式重新启动服务，然后刷新本页。<br>' +
+      '<span style="color:#8fa6bf">（服务退出一般是因为重启/注销，或它的窗口被关掉了。' +
+      '监督进程如果还在跑，重启服务后数据会自动接上。）</span>';
+    box.appendChild(w);
+    offlineNotified = true;
+  }
+
+  const stateText = document.getElementById('cstateText');
+  const sub = document.getElementById('cstateSub');
+  const btns = document.getElementById('cbtns');
+  if (stateText) stateText.textContent = '服务未运行';
+  if (sub) sub.textContent = '按钮暂时不可用，先启动仪表盘服务';
+  if (btns) btns.innerHTML = '';
+}
+
+async function refresh() {
+  try {
+    const d = await api('/api/data');
+    if (offlineNotified) {
+      offlineNotified = false;
+      document.getElementById('warnBox').innerHTML = '';
+    }
+    renderStatus(d);
+    renderWarn(d);
+    renderCards(d);
+    renderTimeline(d);
+    renderOffList(d);
+    renderDonut(d);
+    renderWeek(d);
+    renderProcs(d);
+    renderMeta(d);
+    renderRecent(d);
+    renderControl(d);
+  } catch (e) {
+    showOffline();
+  }
+}
+
+document.getElementById('btnRefresh').onclick = refresh;
+refresh();
+timer = setInterval(refresh, 5000);
+
+// 支持用 #settings 直接打开设置（方便收藏成"设置页"）
+if (location.hash === '#settings' || location.search.indexOf('settings=1') >= 0) {
+  openDrawer();
+}
+
+// 窗口尺寸变化后重新测量（时间轴/周图按容器实际宽度绘制）
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(refresh, 250);
+});

@@ -1,0 +1,74 @@
+{
+  "interval_sec": 180,
+  "max_width": 1600,
+  "jpeg_quality": 85,
+  "detail": "low",
+  "idle_skip_sec": 300,
+
+  "capture": {
+    "enabled": true,
+    "default_sec": null,
+    "min_gap_sec": 20,
+    "rules": [
+      {
+        "name": "游戏与模拟器：不判定",
+        "process": ["steam", "mumup*", "nx_main", "nemu*", "pcl*", "minecraft*", "javaw", "league*", "wegame", "gamepp*"],
+        "action": "skip"
+      },
+      {
+        "name": "短视频：一切换到就立刻查",
+        "title_contains": ["抖音", "快手", "小红书"],
+        "switch_check": true
+      },
+      {
+        "name": "即时通讯：切换看一眼，之后每 10 分钟",
+        "process": ["wechat*", "weixin*", "qq", "tim*", "telegram*", "discord*"],
+        "polling_sec": 600
+      },
+      {
+        "name": "长文阅读：每 5 分钟看一次",
+        "process": ["sumatrapdf*", "acrobat*", "acrord32", "foxitreader*", "winword*", "wps*", "et", "wpp*", "onenote*", "calibre*"],
+        "tick_sec": 300
+      },
+      {
+        "name": "写代码与终端：每 4 分钟看一次",
+        "process": ["code", "code - insiders", "devenv", "pycharm*", "idea*", "goland*", "clion*", "webstorm*", "windowsterminal", "cmd", "powershell", "pwsh", "wt", "xshell*", "mobaxterm*"],
+        "tick_sec": 240
+      },
+      {
+        "name": "播放器与音乐：每 5 分钟看一次",
+        "process": ["potplayer*", "vlc", "mpc-hc*", "kugou*", "qqmusic*", "cloudmusic*", "spotify*"],
+        "tick_sec": 300
+      }
+    ]
+  },
+
+  "api": {
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "credentials_file": "~/.dsh/.credentials.yaml",
+    "temperature": 0,
+    "max_tokens": 900,
+    "timeout_sec": 90
+  },
+  "judge": {
+    "goal": "备考学习（课程视频、教材、网课、题库、编程/外语学习、写作业与笔记）",
+    "strictness": "normal",
+    "extra_rules": [],
+    "alias_rules": []
+  },
+  "reminder": {
+    "enabled": true,
+    "backend": "auto",
+    "sound": true,
+    "mute_after_remind_sec": 300,
+    "off_task_streak_required": 1,
+    "auto_close_sec": 60
+  },
+  "privacy": {
+    "save_shots": false,
+    "save_api_raw": true,
+    "shots_dir": "data/shots"
+  }
+}
