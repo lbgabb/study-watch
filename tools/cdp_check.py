@@ -40,6 +40,18 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def _span_minutes(tag_text: str) -> int | None:
+    """从 '00:00–00:18｜6 段' 里解析出窗口跨度（分钟），按跨零点处理。"""
+    m = re.search(r"(\d{2}):(\d{2})[–\-](\d{2}):(\d{2})", tag_text or "")
+    if not m:
+        return None
+    a = int(m.group(1)) * 60 + int(m.group(2))
+    b = int(m.group(3)) * 60 + int(m.group(4))
+    if b < a:
+        b += 24 * 60
+    return b - a
+
+
 class WS:
     """最小 WebSocket 客户端（只支持文本帧，够 CDP 用）。"""
 
@@ -218,28 +230,59 @@ def main() -> int:
         check("时间轴画出判定段", isinstance(segs_all, int) and segs_all > 0, f"{segs_all} 段")
 
         print()
-        print("=== 点「最近 1 小时」应缩放到 1 小时窗口 ===")
-        cdp.eval_js("""(() => {
-            const b = Array.from(document.querySelectorAll('#tlPresets button'))
-                .find(x => x.textContent.indexOf('1 小时') >= 0);
-            if (!b) return 'no-button';
-            b.click();
-            return 'clicked';
+        print("=== 预设按钮：应把视图缩到比全天更窄的窗口 ===")
+        # 数据跨度可能很短（刚用没多久时只有十几分钟）。
+        # 那种情况下"最近 1 小时"本来就等于全天，标签不变是**正确行为**。
+        # 所以按实际跨度挑一个"确实比全天窄"的预设来测，而不是死写 1 小时。
+        span_min = cdp.eval_js("""(() => {
+            const tag = document.getElementById('tlTag').textContent;
+            const m = tag.match(/(\\d{2}:\\d{2})[–\\-](\\d{2}:\\d{2})/);
+            if (!m) return null;
+            const toMin = s => (+s.slice(0,2)) * 60 + (+s.slice(3));
+            let a = toMin(m[1]), b = toMin(m[2]);
+            if (b < a) b += 24 * 60;              // 跨零点
+            return b - a;
         })()""")
-        time.sleep(0.8)
-        tag_1h = cdp.eval_js(tag)
-        hint_1h = cdp.eval_js(hint)
-        segs_1h = cdp.eval_js(COUNT_BARS)
-        check("按钮点击生效（标签变化）", tag_1h != tag_all, f"{tag_all} -> {tag_1h}")
-        check("只显示窗口内的段", isinstance(segs_1h, int) and segs_1h <= segs_all,
-              f"{segs_all} -> {segs_1h}")
-        check("标签段数与实际画出的段数一致",
-              isinstance(segs_1h, int) and f"{segs_1h} 段" in (tag_1h or ""),
-              f"标签={tag_1h}｜实际 {segs_1h} 段")
+
+        wanted = None
+        if span_min is not None:
+            for label, mins in (("1 小时", 60), ("3 小时", 180),
+                                ("6 小时", 360), ("12 小时", 720)):
+                if span_min > mins:
+                    wanted = (label, mins)
+                    break
+
+        if wanted is None:
+            print(f"  （当天数据只有 {span_min} 分钟，比最小预设还短，"
+                  f"点预设本就等于全天，跳过这项——不是失败）")
+            segs_preset = segs_all
+        else:
+            label, _ = wanted
+            cdp.eval_js(f"""(() => {{
+                const b = Array.from(document.querySelectorAll('#tlPresets button'))
+                    .find(x => x.textContent.indexOf({label!r}) >= 0);
+                if (!b) return 'no-button';
+                b.click();
+                return 'clicked';
+            }})()""")
+            time.sleep(0.8)
+            tag_preset = cdp.eval_js(tag)
+            hint_preset = cdp.eval_js(hint)
+            segs_preset = cdp.eval_js(COUNT_BARS)
+            check(f"点「最近 {label}」后标签变化", tag_preset != tag_all,
+                  f"{tag_all} -> {tag_preset}")
+            check("窗口确实变窄了", _span_minutes(tag_preset) is not None
+                  and _span_minutes(tag_preset) <= span_min,
+                  f"{span_min} 分钟 -> {_span_minutes(tag_preset)} 分钟")
+            check("只显示窗口内的段", isinstance(segs_preset, int) and segs_preset <= segs_all,
+                  f"{segs_all} -> {segs_preset}")
+            check("标签段数与实际画出的段数一致",
+                  isinstance(segs_preset, int) and f"{segs_preset} 段" in (tag_preset or ""),
+                  f"标签={tag_preset}｜实际 {segs_preset} 段")
 
         if shot:
             n = cdp.screenshot(shot)
-            print(f"\n已截图（最近 1 小时视图）：{shot}（{n} 字节）")
+            print(f"\n已截图（预设缩放后视图）：{shot}（{n} 字节）")
 
         print()
         print("=== 重置应回到全天 ===")
