@@ -1462,10 +1462,10 @@ function petReact(ev) {
   else if (ev.kind === 'break_start') petMotion('ketchup');
   else if (ev.kind === 'reminder' || ev.kind === 'off_task') petMotion('splash');
   const tag = document.getElementById('petTag');
-  if (tag) {
-    tag.textContent = (PET_CARD_LABEL[card] || card) +
-      (ev.time ? ' · ' + ev.time : '');
-  }
+  // 只显示场景名。之前还带上了 ev.time（形如 07:22:45），看上去像个
+  // 意味不明的计时器，而且和番茄钟倒计时容易混。
+  // 独立窗口（web/pet.js）已经改成这样，两边保持一致。
+  if (tag) tag.textContent = PET_CARD_LABEL[card] || '鲸鱼娘';
 }
 
 // 每秒走一次：气泡在"提醒内容"和"番茄钟倒计时"之间切换。

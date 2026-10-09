@@ -170,6 +170,67 @@ def main() -> int:
         check("停止后按钮变回「开始专注」",
               any("开始专注" in b for b in (btns2 or [])), str(btns2))
 
+        # --- 5. 右键菜单：能试全部表情与动作 ---
+        # 模型有 15 个表情 8 个动作，大部分只等特定场景才出现，
+        # 用户没法主动看全 —— 菜单就是为这个加的。
+        pet_event.clear()
+        time.sleep(1)
+        menu = c.eval_js("""(() => {
+            document.dispatchEvent(new MouseEvent('contextmenu',
+                {bubbles: true, clientX: 60, clientY: 40}));
+            const m = document.getElementById('menu');
+            const bs = Array.from(m.querySelectorAll('button'));
+            return {
+              visible: m.classList.contains('on'),
+              exprs: bs.filter(b => b.dataset.expr).length,
+              motions: bs.filter(b => b.dataset.motion).length,
+            };
+        })()""")
+        check("右键能打开菜单", bool(menu.get("visible")))
+        check("菜单列出全部 15 个表情", int(menu.get("exprs") or 0) == 15,
+              f"{menu.get('exprs')} 个")
+        check("菜单列出全部 8 个动作", int(menu.get("motions") or 0) == 8,
+              f"{menu.get('motions')} 个")
+
+        # 逐个点一遍：每个表情和动作都要能真的生效。
+        #
+        # 两个坑都踩过：
+        #   · 用 element.click() 在 CDP 里对 onclick= 赋值的元素不派发事件，
+        #     要 dispatchEvent(new MouseEvent('click'))；
+        #   · exprNow 只保存"当前"表情，如果在循环里先点完 15 个再统一检查，
+        #     前面 14 次的结果已经被覆盖了。所以每点一次就当场断言。
+        per = c.eval_js("""(() => {
+            const m = document.getElementById('menu');
+            const bad = [], okExpr = [], okMotion = [];
+            for (const b of m.querySelectorAll('button')) {
+              if (!b.dataset.expr && !b.dataset.motion) continue;
+              b.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+              if (b.dataset.expr) {
+                if (exprNow === b.dataset.expr) okExpr.push(b.dataset.expr);
+                else bad.push(b.dataset.expr + ' -> ' + exprNow);
+              } else {
+                okMotion.push(b.dataset.motion);
+              }
+            }
+            return {exprOk: okExpr.length, motionOk: okMotion.length, bad};
+        })()""")
+        check("15 个表情都能切成功", int(per.get("exprOk") or 0) == 15,
+              f"成功 {per.get('exprOk')}｜失败 {per.get('bad')}")
+        check("8 个动作都能播不报错", int(per.get("motionOk") or 0) == 8,
+              f"成功 {per.get('motionOk')}")
+
+        # 恢复自动表情后应回到按状态决定
+        c.eval_js("""(() => {
+            const m = document.getElementById('menu');
+            const b = Array.from(m.querySelectorAll('button'))
+                .find(x => x.textContent.includes('恢复自动'));
+            if (b) b.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+        })()""")
+        time.sleep(5)
+        st5 = c.eval_js(PROBE)
+        check("「恢复自动表情」后回到自动判断",
+              bool(st5.get("exprNow")), str(st5.get("exprNow")))
+
         print()
         print(f"  {PASS} 通过 / {FAIL} 失败")
         return 0 if FAIL == 0 else 1

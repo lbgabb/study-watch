@@ -75,6 +75,27 @@
   #planbar button.primary { background:#2f6f4f; border-color:#3d8a63; color:#fff; }
   #planbar button.warn { background:#5a3a3a; border-color:#7a4a4a; }
   #planbar .pinfo { font-size:10.5px; color:var(--dim); margin-left:auto; }
+  /* 右键菜单：逐个试表情与动作（方便看全模型能力） */
+  #menu {
+    position:fixed; z-index:50; display:none;
+    background:#1f2b3a; border:1px solid var(--line); border-radius:9px;
+    padding:5px; box-shadow:0 6px 20px rgba(0,0,0,.45);
+    max-height:78vh; overflow:auto; width:186px;
+    -webkit-app-region:no-drag;
+  }
+  #menu.on { display:block; }
+  #menu .h {
+    font-size:10.5px; color:var(--dim); padding:4px 7px 2px;
+    border-top:1px solid var(--line); margin-top:3px;
+  }
+  #menu .h:first-child { border-top:none; margin-top:0; }
+  #menu button {
+    display:block; width:100%; text-align:left; font-size:11.5px;
+    padding:4px 8px; border:none; border-radius:6px;
+    background:transparent; color:#dbe4ee; cursor:pointer; position:relative; z-index:1;
+  }
+  #menu button:hover { background:#2f3f52; }
+  #menu button.on { background:#2f6f4f; color:#fff; }
 </style>
 
 <div id="root">
@@ -88,8 +109,9 @@
   <div id="stage"><canvas id="pet"></canvas></div>
   <div id="planbar"></div>
   <div id="say">正在把鲸鱼娘请出来…</div>
-  <div id="hint">拖动顶栏可移动窗口 · 点角色摸摸头 · 双击催一句</div>
+  <div id="hint">拖动顶栏移动 · 点角色摸摸头 · 双击催一句 · <b>右键试所有表情与动作</b></div>
 </div>
+<div id="menu"></div>
 
 <script src="/vendor/live2dcubismcore.min.js"></script>
 <script src="/vendor/pixi.min.js"></script>

@@ -9,6 +9,7 @@
 import json
 import shutil
 import sys
+from datetime import datetime, timedelta
 import time
 import urllib.request
 from pathlib import Path
@@ -100,15 +101,31 @@ def logic_tests() -> None:
 
     print()
     print("=== 6) 休息时段不计入专注率（关键设计）===")
-    recs = [
-        {"status": "ok", "ts": "2026-10-09T09:00:00", "sec": 1500,
-         "on_task": True, "category": "学习"},
-        {"status": "ok", "ts": "2026-10-09T09:25:00", "sec": 300,
-         "on_task": False, "category": "娱乐", "exclude_from_stats": True,
-         "plan_phase": "break"},
-        {"status": "ok", "ts": "2026-10-09T09:30:00", "sec": 1500,
-         "on_task": True, "category": "学习"},
-    ]
+    # 合成记录必须让 ts 与 sec 自洽：aggregate 优先用 sec，
+    # 而 ts 是给"按间隔推算"那条兜底路径用的。两套数字对不上时，
+    # 同一个断言会因为走哪条路径而给出不同结果 —— 实测就是这么踩到的。
+    def _recs(offset_min: int = 0):
+        base = datetime(2026, 10, 9, 9, 0, 0) + timedelta(minutes=offset_min)
+        # 每条时长要落在 MAX_SLOT_SEC（900s）以内，否则会被封顶，
+        # "sec 之和" 这个不变量就不成立 —— 真实数据的判定间隔是 180s，
+        # 永远不会碰到这个上限，所以这是测试数据该遵守的约束。
+        specs = [
+            (800, True, "学习", False),
+            (300, False, "娱乐", True),      # 休息
+            (800, True, "学习", False),
+        ]
+        out, t = [], base
+        for sec, on_task, cat, excl in specs:
+            r = {"status": "ok", "ts": t.strftime("%Y-%m-%dT%H:%M:%S"),
+                 "sec": sec, "on_task": on_task, "category": cat}
+            if excl:
+                r["exclude_from_stats"] = True
+                r["plan_phase"] = "break"
+            out.append(r)
+            t += timedelta(seconds=sec)
+        return out
+
+    recs = _recs()
     a = report.aggregate(recs)
     check("休息记录被排除在判定次数外", a["checks"] == 2, f"checks={a['checks']}")
     check("休息时长单独统计", a["break_sec"] == 300 and a["break_checks"] == 1,
@@ -117,9 +134,17 @@ def logic_tests() -> None:
           f"{a['on_task_rate'] * 100:.1f}%")
     naive = report.aggregate([{k: v for k, v in r.items()
                                if k != "exclude_from_stats"} for r in recs])
+    # 断言"明显更低"就够了，不要写死 0.3 —— 差距大小取决于休息占比：
+    # 800s 学习 + 300s 休息时是 84.2% vs 100%（差 15.8 个点）。
+    # 写死 base-0.3 会因为休息占比不够大而失败，那是测试过严，不是实现错。
     check("对照：若把休息算进去会明显偏低",
-          naive["on_task_rate"] < a["on_task_rate"] - 0.3,
+          naive["on_task_rate"] < a["on_task_rate"] - 0.10,
           f"{naive['on_task_rate'] * 100:.1f}% vs {a['on_task_rate'] * 100:.1f}%")
+    check("时长只算一次：在状态+分心+休息 == 各条 sec 之和",
+          abs((a["on_task_sec"] + a["off_task_sec"] + a["break_sec"])
+              - sum(r["sec"] for r in recs)) < 1e-6,
+          f'{a["on_task_sec"] + a["off_task_sec"] + a["break_sec"]:.0f} vs '
+          f'{sum(r["sec"] for r in recs):.0f}')
 
     print()
     print("=== 7) phase_for：没有计划时行为不变 ===")

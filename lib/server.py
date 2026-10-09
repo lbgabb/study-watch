@@ -413,7 +413,9 @@ def build_data(day: date | None = None) -> dict[str, Any]:
     view_day = day or today
     all_recs = _records_on(view_day)
     slotted = _with_slots(all_recs)
-    agg = report.aggregate(all_recs)
+    # 传 slotted 而不是 all_recs：aggregate 要复用记录上的 sec，
+    # 否则它会自己在"排除休息后的子集"里重算间隔，口径与时间轴不一致
+    agg = report.aggregate(slotted)
 
     # 时间轴：按间隔折算后连续排布。头像要按"前一条是什么"来算
     # （判断是否刚从不专注切回专注），所以整体过一次 with_avatars。
@@ -437,7 +439,7 @@ def build_data(day: date | None = None) -> dict[str, Any]:
     for i in range(6, -1, -1):
         d = today - timedelta(days=i)
         recs = _records_on(d)
-        a = report.aggregate(recs)
+        a = report.aggregate(_with_slots(recs))
         days.append({
             "date": d.isoformat(), "checks": a["checks"],
             "on_task_sec": a["on_task_sec"], "off_task_sec": a["off_task_sec"],
@@ -887,13 +889,25 @@ class Handler(BaseHTTPRequestHandler):
                 day = _records_on(date.today())
                 slotted = _with_slots(day)
                 last = None
+                off_streak = 0
                 if slotted:
                     r = slotted[-1]
                     prev_rec = slotted[-2] if len(slotted) > 1 else None
                     last = {"ts": r["ts"], "on_task": bool(r.get("on_task")),
                             "activity": r.get("activity") or "",
                             "category": r.get("category") or "",
+                            "confidence": r.get("confidence"),
                             "avatar": _avatar_for(r, prev_rec)}
+                    # 末尾连续分心了几次。桌宠用它决定要不要"哭"。
+                    # 在服务端算而不是让前端数：前端只拿到一条 last，
+                    # 要数就得把当天所有记录都传过去 —— 而这是个刻意做轻的接口。
+                    for rec in reversed(slotted):
+                        if rec.get("on_task"):
+                            break
+                        off_streak += 1
+                # 深夜：23 点到次日 5 点，且此刻不在状态。
+                # 只在"该睡却在跑神"时提示，正常熬夜学习不打扰。
+                hour = datetime.now().hour
                 self._json({
                     "pet.enabled": pet_cfg.get("enabled", True),
                     "pet.max_fps": pet_cfg.get("max_fps", 20),
@@ -902,6 +916,8 @@ class Handler(BaseHTTPRequestHandler):
                     "pet.pause_when_hidden": pet_cfg.get("pause_when_hidden", True),
                     "plan": plan.describe(plan.load()),
                     "last": last,
+                    "off_streak": off_streak,
+                    "night": hour >= 23 or hour < 5,
                     "event": pet_event.latest().get("latest"),
                 })
             except Exception as e:

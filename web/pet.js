@@ -15,6 +15,97 @@
 // "正在把鲸鱼娘请出来…"（实测为排查这个花了不少时间才发现是启动静默失败）。
 // 顺手存到 window.__petErr，测试脚本可以直接读。
 window.__petErr = null;
+// ---------- 右键菜单：逐个试表情与动作 ----------
+// 为什么要这个：模型里有 15 个表情、8 个动作，但大部分要等特定场景才会出现，
+// 用户没法主动看全。右键就能挨个试，也方便挑"哪个更好看"再决定怎么接触发。
+const MENU_EXPRS = [
+  ['star', '星星眼'], ['heart', '爱心眼'], ['excited', '开心兴奋'],
+  ['tease', '调皮'], ['tongue', '吐舌'], ['angry', '生气'],
+  ['cry', '哭'], ['sad', '悲伤'], ['dizzy', '晕晕'],
+  ['sleepy', '闭眼口水'], ['blank', '呆呆眼'], ['sweat', '流汗'],
+  ['question', '问号'], ['dark', '阴暗'], ['blush', '脸红'],
+];
+const MENU_MOTIONS = [
+  ['idle', '待机'], ['bubble', '吹泡泡'], ['splash', '喷水'],
+  ['selfie', '自拍'], ['selfieQuick', '快速自拍'], ['ketchup', '挤番茄酱'],
+  ['openLid', '开盖'], ['aidale', '打瞌睡'],
+];
+
+function markMenu(kind, id) {
+  const menu = $('menu');
+  if (!menu) return;
+  for (const b of menu.querySelectorAll('button')) {
+    b.classList.toggle('on', kind === 'expr' ? b.dataset.expr === id
+                                             : b.dataset.motion === id);
+  }
+}
+
+function buildMenu() {
+  const menu = $('menu');
+  if (!menu || menu.dataset.built) return;
+  menu.dataset.built = '1';
+  const addHead = txt => {
+    const d = document.createElement('div');
+    d.className = 'h';
+    d.textContent = txt;
+    menu.appendChild(d);
+  };
+  addHead('表情（' + MENU_EXPRS.length + '）');
+  for (const [id, label] of MENU_EXPRS) {
+    const b = document.createElement('button');
+    b.textContent = label + '  ' + id;
+    b.dataset.expr = id;
+    b.onclick = () => {
+      bubbleUntil = 0;              // 让位给手动挑选
+      const key = setExpr(id, true);
+      say('手动切换表情：' + label + '（' + key + '）', 5000);
+      markMenu('expr', id);
+    };
+    menu.appendChild(b);
+  }
+  addHead('动作（' + MENU_MOTIONS.length + '）');
+  for (const [id, label] of MENU_MOTIONS) {
+    const b = document.createElement('button');
+    b.textContent = label + '  ' + id;
+    b.dataset.motion = id;
+    b.onclick = () => {
+      motion(id);
+      say('播放动作：' + label + '（' + id + '）', 5000);
+      markMenu('motion', id);
+    };
+    menu.appendChild(b);
+  }
+  addHead('其他');
+  const b = document.createElement('button');
+  b.textContent = '恢复自动表情';
+  b.onclick = () => {
+    bubbleUntil = 0;
+    hideMenu();
+    poll();
+    say('好了，我按你的状态来。', 4000);
+  };
+  menu.appendChild(b);
+}
+
+function showMenu(x, y) {
+  const menu = $('menu');
+  if (!menu) return;
+  const root = $('root');
+  const box = root ? root.getBoundingClientRect() : {width: 380, height: 480};
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  menu.classList.add('on');
+  const r = menu.getBoundingClientRect();
+  // 别超出窗口：先摆再按实际尺寸收回来
+  if (r.right > box.width) menu.style.left = Math.max(2, box.width - r.width - 4) + 'px';
+  if (r.bottom > box.height) menu.style.top = Math.max(2, box.height - r.height - 4) + 'px';
+}
+
+function hideMenu() {
+  const menu = $('menu');
+  if (menu) menu.classList.remove('on');
+}
+
 function petFail(where, e) {
   const msg = (e && (e.stack || e.message)) || String(e);
   window.__petErr = where + ': ' + msg;
@@ -34,7 +125,17 @@ const PET_EXPR = {
   breakTime: 'heart', done: 'excited',
 };
 
-const PET_TEXT = {
+// 新接上的几个表情的台词（原来是模型里有、但没人触发）
+const PET_TEXT_EXTRA = {
+  cry: '连续好几次了。要不先休息一下？',
+  dark: '夜深了，早点睡比多熬一小时有用。',
+  question: '这条我有点拿不准，你自己看看。',
+  dizzy: '我眼睛都转晕了，你也歇会儿吧。',
+  sad: '这一段时间都不太行啊，要不要换个地方学？',
+  blush: '行吧，这段时间表现不错。',
+};
+
+const PET_TEXT = Object.assign({
   star: '在状态，看着挺像样的。',
   sweat: '刚才还在别处，现在回来了——这就对了。',
   tease: '哎呀呀，又在开小差呢。',
@@ -44,7 +145,7 @@ const PET_TEXT = {
   sleepy: '困了就别硬撑，起身走两步。',
   heart: '这轮结束了，去休息。',
   excited: '计划完成，干得漂亮。',
-};
+}, PET_TEXT_EXTRA);
 
 const PET_CARD_LABEL = {
   general: '分心', shortvideo: '刷视频', gaming: '游戏', social: '聊天',
@@ -71,7 +172,17 @@ function setExpr(id, force) {
     && model.internalModel.motionManager
     && model.internalModel.motionManager.expressionManager;
   if (!em) return key;
-  try { em.setExpression(key); exprNow = key; } catch (e) { exprNow = ''; }
+  try {
+    em.setExpression(key);
+    exprNow = key;
+    window.__petExprErr = null;
+  } catch (e) {
+    // **不要静默吞掉**：以前这里只把 exprNow 清空，结果表情切换失败时
+    // 界面毫无反应也查不出原因。现在把错误留下来（菜单与测试都能读）。
+    exprNow = '';
+    window.__petExprErr = key + ': ' + ((e && e.message) || String(e));
+    try { console.warn('[pet] setExpression failed', key, e); } catch (_) {}
+  }
   return key;
 }
 
@@ -253,6 +364,16 @@ async function boot() {
   canvas.style.cursor = 'pointer';
   canvas.addEventListener('click', onPoke);
   canvas.addEventListener('dblclick', e => { e.preventDefault(); onNudge(); });
+  // 右键：试表情与动作
+  buildMenu();
+  document.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    showMenu(e.clientX - (window.screenX - window.screenX), e.clientY);
+  });
+  document.addEventListener('click', e => {
+    const menu = $('menu');
+    if (menu && menu.classList.contains('on') && !menu.contains(e.target)) hideMenu();
+  });
   setExpr('star', true);
   say(PET_TEXT.star, 4000);
   motion('idle');
@@ -353,11 +474,23 @@ async function poll() {
 
 // 决定当前该用哪个表情。规则与仪表盘、lib/avatars.py 保持一致：
 // 只有"刚从不专注切回专注"才给鼓励。
+//
+// 按优先级从"具体"到"笼统"：连续分心 > 深夜 > 判定不确定 > 类别。
 function decideKey(d) {
   const p = d.plan || {};
   if (p.finished) return 'done';
-  if (p.active && p.is_break) return 'breakTime';
+
   const last = d.last;
+  // --- 优先看更具体的信号 ---
+  // 连续分心 3 次以上：光吐槽已经没用了，换成"哭"
+  if (last && !last.on_task && (d.off_streak || 0) >= 3) return 'cry';
+  // 深夜还在跑神：提示该睡了（正常熬夜学习不打扰）
+  if (last && !last.on_task && d.night) return 'dark';
+  // 判定置信度很低：它自己也没把握，用问号比乱下结论好
+  if (last && typeof last.confidence === 'number' && last.confidence > 0
+      && last.confidence < 0.55) return 'question';
+
+  if (p.active && p.is_break) return 'breakTime';
   if (!last) return 'blank';
   const a = last.avatar || 'general';
   if (a === 'thumbsup') return 'sweat';

@@ -53,13 +53,23 @@ def aggregate(records: list[dict]) -> dict[str, Any]:
         ts = _dt(r)
         if ts is None:
             continue
-        load = _load_sec(r) or float(r.get("interval_sec") or 120)
-        if i + 1 < len(ok):
-            nxt = _dt(ok[i + 1])
-            if nxt:
-                gap = (nxt - ts).total_seconds()
-                if 0 < gap < MAX_SLOT_SEC:
-                    load = gap
+        # 时长只算一次。
+        #
+        # server._with_slots 已经在**全部记录**（含休息）上算好了每条持续多久，
+        # 这里直接用它。不要再在"排除休息后的子集"里推算间隔 ——
+        # 那样跨过休息的那条会把休息时段一起吞进来：实测 A(focus) → B(休息)
+        # → C(focus) 时 A 会算成"到 C 的间隔"，统计合计因此比时间轴多约 1100s，
+        # 图表上的"覆盖时长"也跟着偏大。
+        load = float(r.get("sec") or 0.0)
+        if load <= 0:
+            # 没有 sec（例如直接调 aggregate 的单元测试）：落回推算
+            load = _load_sec(r) or float(r.get("interval_sec") or 120)
+            if i + 1 < len(ok):
+                nxt = _dt(ok[i + 1])
+                if nxt:
+                    gap = (nxt - ts).total_seconds()
+                    if 0 < gap < MAX_SLOT_SEC:
+                        load = gap
         load = min(load, MAX_SLOT_SEC)
 
         cat = str(r.get("category") or "其他")

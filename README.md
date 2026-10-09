@@ -935,6 +935,25 @@ it truncates the string and the error you get is "perhaps you forgot a comma", w
 useful. That one was hit four times in a single file.
 
 
+### Duration is computed in exactly one place
+
+`aggregate` used to recompute each record's duration inside the *break-excluded subset*, so a
+record that spans a break **swallowed the break's time**: with `A(focus) → B(break) → C(focus)`,
+A was measured as "the gap to C", making the stats total about 1100s larger than the timeline and
+inflating the "covered time" figure on the dashboard.
+
+The fix is to compute duration once in `server._with_slots` (over **all** records) and have
+`aggregate` reuse the `sec` on each record, falling back to recomputation only when `sec` is absent.
+
+**Both call sites must use the same source**: in `build_data`, "today" was passed raw records
+(no `sec`) so it took the fallback path while the 7-day chart took another, making the summary card
+disagree with a direct computation over the same data. Both now receive `_with_slots` output.
+
+The invariant (guarded by `tests/test_server.py`): **timeline total = on-task + off-task + break**.
+
+One more: synthetic test data must keep `ts` and `sec` consistent and stay under
+`MAX_SLOT_SEC` (900s), otherwise the same assertion passes or fails depending on which path runs.
+
 ### Pet window: traps that only show up in a real window
 
 **1. `requestAnimationFrame` never fires in an app-mode window.**
