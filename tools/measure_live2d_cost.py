@@ -34,12 +34,19 @@ OBSERVE_SEC = 15
 def tree_cpu(profile_key: str) -> tuple[float, int, float]:
     """只量我们启动的那个实例（按 --user-data-dir 定位进程树）。"""
     script = Path(__file__).with_name("proc_tree_cpu.ps1")
+    keyfile = Path(tempfile.gettempdir()) / "sw_perf_key.txt"
     try:
+        # 指纹走文件。从 Python 的 subprocess 传 "-ProfileKey 值" 会丢掉
+        # （直接手敲 powershell 则正常），而空指纹会匹配整台机器的进程，
+        # 量出来的就全是别的软件的开销 —— 详见 proc_tree_cpu.ps1 的注释。
+        keyfile.write_text(profile_key, encoding="utf-8")
         out = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-             "-File", str(script), "-ProfileKey", profile_key],
+             "-File", str(script), "-KeyFile", str(keyfile)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, creationflags=0x08000000).stdout.strip()
+        if out.startswith("ERR"):
+            raise RuntimeError(out)
         cpu_s, n, rss = out.split("|")
         return float(cpu_s), int(n), int(rss) / 1024 / 1024
     except Exception:
