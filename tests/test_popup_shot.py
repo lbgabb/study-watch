@@ -144,6 +144,7 @@ def main() -> int:
         print("提醒窗不可用（tkinter 缺失）")
         return 1
 
+    # 用一条"短视频分心"的判定，验证按类别选到了对应卡片
     n.notify(FAKE, goal=cfg["judge"]["goal"])
     for _ in range(12):
         n.pump()
@@ -160,20 +161,33 @@ def main() -> int:
     gray = np.asarray(im.convert("RGB")).astype(int).mean(axis=2)
     h = im.height
 
-    title_band = [b for b in bands if b[0] < h * 0.25]
-    body_band = [b for b in bands if h * 0.25 <= b[0] < h * 0.75]
-    button_band = [b for b in bands if b[0] >= h * 0.75]
+    title_band = [b for b in bands if b[0] < h * 0.75]
+    body_band = [b for b in bands if h * 0.2 <= b[0] < h * 0.95]
+    button_band = [b for b in bands if b[0] >= h * 0.85]
+
+    # 卡片版：上半部分是插画（浅色、彩色），下半部分是深色卡片底 + 文案
+    top = np.asarray(im.convert("RGB")).astype(int)[: int(h * 0.5)]
+    bottom = np.asarray(im.convert("RGB")).astype(int)[int(h * 0.75):]
+    top_bright = float(top.mean())
+    bottom_dark = float(bottom.mean())
+    # 插画里应该有明显的蓝色（角色主色），用色相占比粗略判断
+    arr = np.asarray(im.convert("RGB")).astype(int)
+    blue = float(((arr[:, :, 2] > arr[:, :, 0] + 25) &
+                  (arr[:, :, 2] > 90)).mean())
 
     print(f"窗口内容：{im.width}x{im.height}｜中位亮度={np.median(gray):.0f}")
     print(f"文字行带：{bands}")
-    print(f"标题带 {title_band}｜正文带 {body_band}｜按钮带 {button_band}")
+    print(f"上半部平均亮度 {top_bright:.0f}｜底部平均亮度 {bottom_dark:.0f}"
+          f"｜蓝色像素占比 {blue * 100:.1f}%")
     print(f"截图已保存：{out}")
 
     checks = {
         "窗口内容非空白": len(bands) >= 2,
-        "顶部有标题文字": bool(title_band),
-        "中部有正文文字": bool(body_band),
+        "上半部是插画（明显比底部亮）": top_bright > bottom_dark + 40,
+        "插画里有角色主色（蓝）": blue > 0.06,
+        "底部有文案文字": bool(title_band or body_band),
         "底部有按钮文字": bool(button_band),
+        "窗口尺寸像卡片（不太窄）": im.width >= 380,
     }
     for name, ok in checks.items():
         print(f"  [{'通过' if ok else '失败'}] {name}")

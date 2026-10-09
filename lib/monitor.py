@@ -132,11 +132,15 @@ def do_check(cfg: dict, api_key: str, notifier: Notifier | None, dry: bool) -> d
     return rec
 
 
-def _notify_phase(notifier: Notifier | None, title: str, body: str, cfg: dict) -> None:
+def _notify_phase(notifier: Notifier | None, title: str, body: str, cfg: dict,
+                  *, card_key: str = "", event: str = "") -> None:
     """阶段切换 / 计划完成的通知。
 
     优先用同一个置顶提醒窗（带按钮，用户能确认），失败再退回系统通知。
     这里的 verdict 是"合成"的：只借窗口的展示能力，不代表一次分心判定。
+
+    card_key 指定用哪张角色卡片（庆祝/休息/鼓励）。注意这类通知**不走静音**：
+    正反馈被静音吞掉的话，用户永远只看到批评。
     """
     fake = {
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -149,8 +153,9 @@ def _notify_phase(notifier: Notifier | None, title: str, body: str, cfg: dict) -
         "process": "",
     }
     try:
-        if notifier is not None and not notifier.muted:
-            notifier.notify(fake, goal=cfg.get("judge", {}).get("goal", ""))
+        if notifier is not None:
+            notifier.notify(fake, goal=cfg.get("judge", {}).get("goal", ""),
+                            card_key=card_key, event=event)
             return
     except Exception:
         pass
@@ -302,7 +307,8 @@ def run(cfg: dict, minutes: float | None, dry: bool, background: bool) -> int:
                         log(f"专注计划完成：共 {plan.done_focus_rounds()} 轮专注")
                         _notify_phase(notifier, "计划完成",
                                       f"共完成 {plan.done_focus_rounds()} 轮专注，"
-                                      f"辛苦了。要再来一轮就在仪表盘上点开始。", cfg)
+                                      f"辛苦了。要再来一轮就在仪表盘上点开始。", cfg,
+                                      card_key="celebrate", event="plan_done")
                     else:
                         log(f"{was}结束 -> 进入{plan.phase_label()}"
                             f"（第 {plan.round} 轮，{plan.phase_sec // 60} 分钟）")
@@ -313,7 +319,9 @@ def run(cfg: dict, minutes: float | None, dry: bool, background: bool) -> int:
                              f"休息时不会提醒你分心。"
                              if plan.is_break else
                              f"开始第 {plan.round} 轮专注，{plan.phase_sec // 60} 分钟。"),
-                            cfg)
+                            cfg,
+                            card_key="relax" if plan.is_break else "thumbsup",
+                            event="break_start" if plan.is_break else "phase_focus")
                 # 阶段切换的即时播报（含刚开始的那一轮）
                 if plan.phase != plan_last_phase:
                     plan_last_phase = plan.phase
