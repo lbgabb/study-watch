@@ -862,6 +862,23 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/favicon.ico":
             icon = ROOT / "assets" / "study-watch.ico"
             self._file(icon, "image/x-icon") if icon.is_file() else self._send(204, b"", "image/x-icon")
+        elif route.startswith("/live2d/") or route.startswith("/vendor/"):
+            # Live2D 模型与运行时。只允许白名单扩展名，且路径里不许出现 ..
+            rel = route.lstrip("/")
+            if ".." in rel or rel.startswith("/"):
+                self._send(403, b"bad path", "text/plain; charset=utf-8")
+            elif Path(rel).suffix.lower() not in (".json", ".png", ".js", ".moc3"):
+                self._send(403, b"bad type", "text/plain; charset=utf-8")
+            else:
+                f = ROOT / "assets" / rel
+                if f.is_file():
+                    ct = {".json": "application/json; charset=utf-8",
+                          ".png": "image/png",
+                          ".js": "application/javascript; charset=utf-8",
+                          ".moc3": "application/octet-stream"}[f.suffix.lower()]
+                    self._file(f, ct)
+                else:
+                    self._send(404, b"not found", "text/plain; charset=utf-8")
         elif route.startswith("/avatars/"):
             # 角色头像（assets/reminder/face/<key>.png）。白名单文件名，
             # 不做路径拼接，避免 ../ 之类的问题。

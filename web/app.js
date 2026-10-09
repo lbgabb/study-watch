@@ -1187,7 +1187,147 @@ function avatarEl(key, size) {
   return img;
 }
 
-// ---------- 专注计划（番茄钟）----------
+// ---------- Live2D 桌宠 ----------
+// 跟着判定状态换表情。模型是 CC BY-NC-SA 4.0（见仓库 NOTICE.md），
+// 渲染靠 assets/vendor 下的 Cubism Core + pixi + pixi-live2d-display。
+//
+// 表情 id 来自 tools/build_live2d_model.py 的 EXPRESSIONS 表。
+// 找不到 PIXI（离线、vendor 缺失）时不报错，只显示一行说明 ——
+// 桌宠是锦上添花，坏掉不该影响仪表盘的主功能。
+const PET_EXPR = {
+  onTask: 'star', comeback: 'sweat', offGeneral: 'tease', offShort: 'tongue',
+  offGame: 'angry', offSocial: 'tease', idle: 'blank', sleepy: 'sleepy',
+  breakTime: 'heart', done: 'excited', bad: 'cry', night: 'dark',
+};
+const PET_TEXT = {
+  star: '在状态，看着挺像样的。',
+  sweat: '刚才还在别处，现在回来了——这就对了。',
+  tease: '哎呀呀，又在开小差呢。',
+  tongue: '再刷一个就学习？你上一个「再刷一个」是二十分钟前说的。',
+  angry: '这局不算，那下一局呢。存档不会跑，作业会。',
+  blank: '盯着屏幕发呆不算学习，也不算休息。',
+  sleepy: '困了就别硬撑，起身走两步。',
+  heart: '这轮结束了，去休息。',
+  excited: '计划完成，干得漂亮。',
+  cry: '连续好几次了。要不要先休息一下？',
+  dark: '夜深了，早点睡比多熬一小时有用。',
+  dizzy: '我眼睛都转晕了，你也歇会儿吧。',
+  question: '这条我有点拿不准，你自己看看。',
+  blush: '行吧，这次算你厉害。',
+  normal: '',
+};
+
+let petApp = null;
+let petModel = null;
+let petExprNow = '';
+let petFailed = false;
+
+function petSetExpr(id, force) {
+  if (!petModel || petFailed) return;
+  const key = PET_EXPR[id] || id;
+  if (!force && key === petExprNow) return;
+  const em = petModel.internalModel
+    && petModel.internalModel.motionManager
+    && petModel.internalModel.motionManager.expressionManager;
+  if (!em) return;
+  try {
+    em.setExpression(key);
+    petExprNow = key;
+    const say = document.getElementById('petSay');
+    if (say) say.textContent = PET_TEXT[key] || PET_TEXT.normal || '';
+    const tag = document.getElementById('petTag');
+    if (tag) tag.textContent = key;
+  } catch (e) {
+    // 某个表情缺失不该让桌宠停摆
+    petExprNow = '';
+  }
+}
+
+function petMotion(name) {
+  if (!petModel || petFailed) return;
+  try { petModel.motion(name); } catch (e) { /* 动作缺失就跳过 */ }
+}
+
+async function initPet() {
+  const canvas = document.getElementById('pet');
+  if (!canvas) return;
+  const tag = document.getElementById('petTag');
+  const say = document.getElementById('petSay');
+  const note = document.getElementById('petNote');
+  if (typeof PIXI === 'undefined' || !PIXI.live2d) {
+    petFailed = true;
+    if (tag) tag.textContent = '不可用';
+    if (say) say.textContent = '没有加载到 Live2D 运行时（assets/vendor 可能缺失）。';
+    return;
+  }
+  try {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const W = Math.max(200, Math.round(rect.width || 300));
+    const H = 300;
+    petApp = new PIXI.Application({
+      view: canvas, width: W, height: H, backgroundAlpha: 0,
+      antialias: true, autoStart: true, resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+    });
+    petModel = await PIXI.live2d.Live2DModel.from('/live2d/c_0120.model3.json',
+                                                  {autoInteract: true, autoUpdate: true});
+    petApp.stage.addChild(petModel);
+    const sc = Math.min(W / petModel.width, H / petModel.height) * 1.06;
+    petModel.scale.set(sc);
+    petModel.anchor.set(0.5, 0.5);
+    petModel.position.set(W / 2, H / 2 + 6);
+    if (tag) tag.textContent = '就绪';
+    if (note) note.textContent = '';
+    petSetExpr('star', true);
+    petMotion('idle');
+    // 点一下会有反应
+    canvas.style.cursor = 'pointer';
+    canvas.onclick = () => {
+      petMotion('bubble');
+      const say2 = document.getElementById('petSay');
+      if (say2) say2.textContent = '别戳我，去学习（我还是要陪你一会儿的）。';
+    };
+    return true;
+  } catch (e) {
+    petFailed = true;
+    if (tag) tag.textContent = '加载失败';
+    if (say) say.textContent = '模型没加载起来：' + (e && e.message ? e.message : e);
+    return false;
+  }
+}
+
+// 按最新一条判定决定表情。规则与 lib/avatars.py 保持一致：
+// 只有"刚从不专注切回专注"才给鼓励，一直专注就用常态表情（否则像刷屏）。
+function petSyncFromData(d) {
+  if (!petModel || petFailed) return;
+  const t = (d && d.today) || {};
+  const last = t.last;
+  if (!last) { petSetExpr('blank'); return; }
+  const p = (d && d.plan) || {};
+  if (p.finished) { petSetExpr('done'); return; }
+  if (p.active && p.is_break) { petSetExpr('breakTime'); return; }
+
+  const recs = t.recent || [];
+  const prev = recs.length >= 2 ? recs[recs.length - 2] : null;
+  const avatar = last.avatar;
+  if (avatar === 'thumbsup') petSetExpr('sweat');
+  else if (avatar === 'celebrate') petSetExpr('done');
+  else if (avatar === 'relax') petSetExpr('breakTime');
+  else if (avatar === 'shortvideo') petSetExpr('offShort');
+  else if (avatar === 'gaming') petSetExpr('offGame');
+  else if (avatar === 'social') petSetExpr('offSocial');
+  else if (avatar === 'sleepy') petSetExpr('sleepy');
+  else if (avatar === 'general') {
+    petSetExpr(last.on_task ? 'star' : 'offGeneral');
+  } else petSetExpr('star');
+
+  // 时间轴上最近几条连续分心 -> 升级成"哭"，但只在真的连续时
+  if (!last.on_task && recs.length >= 3) {
+    const tail = recs.slice(-3);
+    if (tail.every(r => r && !r.on_task)) petMotion('splash');
+  }
+}
+
 // 倒计时在本地按绝对时间戳算，每秒只更新数字与圆环；不重建卡片，
 // 否则正在填的输入框会失焦、按钮会跳。
 let pomoData = null;        // 服务端给的 plan 描述
@@ -1564,6 +1704,7 @@ async function refresh() {
     renderRecent(d);
     renderControl(d);
     renderPomo(d);
+    petSyncFromData(d);
     // 必须放在 renderCards 之后：它每次都会重建卡片，把"现在"这个标题覆盖回去
     tlApplyDateLabels(d);
   } catch (e) {
@@ -1601,6 +1742,8 @@ document.getElementById('offFollow').onchange = () => renderTimeline(null);
 
 refresh();
 timer = setInterval(refresh, 5000);
+// 桌宠是异步加载模型（几百毫秒），不阻塞首屏。加载好后 refresh 会同步表情。
+initPet().then(ok => { if (ok) refresh(); });
 // 倒计时单独每秒走：5 秒轮询会让秒数一跳一跳
 setInterval(tickPomo, 1000);
 // 读回上次保存的节奏（自定义数值存在 config.json 里，不是浏览器内存）

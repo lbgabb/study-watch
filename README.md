@@ -34,6 +34,7 @@ The dashboard (screenshot uses synthetic demo data, not real records):
 - [Quick start](#quick-start)
 - [Pomodoro focus plan](#pomodoro-focus-plan)
 - [The reminder (and yes, it's cute on purpose)](#the-reminder-and-yes-its-cute-on-purpose)
+- [Desktop pet: the whale girl reacts to your state](#desktop-pet-the-whale-girl-reacts-to-your-state)
 - [Capture policy: allocating checks per application](#capture-policy-allocating-checks-per-application)
 - [The dashboard](#the-dashboard)
 - [How a check works](#how-a-check-works)
@@ -208,6 +209,61 @@ A few deliberate choices behind this:
 The same eight faces are reused across the dashboard, so the character that just complained at you
 is the same one you see in the "Now" panel (64px, with a label), in the distraction list, and in the
 recent-verdicts table (34px each). No extra artwork — it's the same files.
+
+---
+
+## Desktop pet: the whale girl reacts to your state
+
+A live **Live2D whale girl** sits in the dashboard. She isn't decoration — **her expression follows the
+verdict**, so you can tell what the last check concluded at a glance:
+
+| State | Expression | What she says |
+| --- | --- | --- |
+| On task | starry eyes | Looking decent. Keep going. |
+| Just came back | sweating | You were elsewhere, now you're back — that's the way. |
+| Off task (general) | playful | Caught you wandering again. |
+| Short videos | tongue out | "Just one more"? Your last one was twenty minutes ago. |
+| Gaming | angry | One more round? Your save file will wait. Your deadline won't. |
+| Idle / staring | blank eyes | Staring at the screen is neither studying nor resting. |
+| Sleepy | eyes closed | Tired is tired. Stand up and walk a bit. |
+| Break time | heart eyes | Round done — go rest. |
+| Plan complete | excited | Plan complete. Nice work. |
+| Repeated drifting | crying + water splash | That's several in a row. Maybe take a break? |
+
+Click her and she reacts (bubble motion). **If WebGL or the assets are missing she simply doesn't
+appear** — the rest of the dashboard is unaffected. The pet is a bonus; it must never break the
+main feature.
+
+### Why the pet lives in the browser, not in the reminder popup
+
+The popup is built with `tkinter`, which **has no WebGL**, and Live2D cannot render without it.
+Putting Live2D in the popup would mean either keeping a browser process alive and streaming
+screenshots into tkinter (expensive), or switching to Electron/WebView2 (a few MB becomes 150MB+).
+Neither is worth it. So the split is:
+
+- **Reminder popup** (tkinter): static cards — zero dependencies, instant, cheap
+- **Pet** (dashboard): real Live2D, because a browser is already running — **no extra process**
+
+### Artwork and licensing (important)
+
+The character artwork is **[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.en)
+(NonCommercial)** — **not** the same as this project's MIT. See [NOTICE.md](NOTICE.md) and
+[PROVENANCE.md](PROVENANCE.md) for the layered terms.
+
+**The character carries three layers of copyright, and all three must be credited:**
+
+| Rights holder | Contribution |
+| --- | --- |
+| **上善无形 (Shangshan Wuxing)** | Original character design, the OC "溟月" |
+| **ZipZipPipe** | The maid whale-girl redesign that adds the DeepSeek elements |
+| **氵六青 (Bilibili UID 11272072)** | The Live2D rigging: binding, motions, expressions |
+
+**This project is free, has no ads and sells nothing → that is non-commercial use, so the artwork may
+be used.** But if you ever want to charge for it or monetise it, you **must delete `assets/live2d/`
+and `assets/reminder/` first**.
+
+Live2D Cubism Core is Live2D Inc.'s proprietary runtime (redistributable as part of a work); pixi and
+pixi-live2d-display are MIT.
 
 ---
 
