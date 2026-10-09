@@ -33,6 +33,7 @@ The dashboard (screenshot uses synthetic demo data, not real records):
 
 - [Quick start](#quick-start)
 - [Pomodoro focus plan](#pomodoro-focus-plan)
+- [The reminder (and yes, it's cute on purpose)](#the-reminder-and-yes-its-cute-on-purpose)
 - [Capture policy: allocating checks per application](#capture-policy-allocating-checks-per-application)
 - [The dashboard](#the-dashboard)
 - [How a check works](#how-a-check-works)
@@ -166,6 +167,47 @@ powershell -File .\pomodoro.ps1 -Stop
 
 The plan lives in `data/plan.json` and **resumes where it left off** if you restart the monitor —
 it does not start over. `rounds: 0` means unlimited, until you stop it manually.
+
+---
+
+## The reminder (and yes, it's cute on purpose)
+
+A cold "you got distracted" popup is easy to ignore and easier to resent — you just turn the tool
+off. So the reminder has a face, and it teases you instead of scolding you.
+
+![Reminder popup](assets/reminder-popup.png)
+
+Eight hand-drawn cards, one per situation. Each one carries a different expression, so you can tell
+what it's about before reading a word:
+
+![Reminder cards](assets/reminder-faces.png)
+
+| Card | When it shows up | Tone |
+| --- | --- | --- |
+| Caught you wandering | Anything that doesn't match a more specific card | tease |
+| "Just one more"? | Process or window title matches a short-video site (TikTok, Shorts, Reels, Bilibili…) | tease |
+| One more round? | Category is gaming | tease |
+| Replying to just one message? | Category is social | tease |
+| Tired is tired | Category is idle — staring at the screen, not doing anything | rest |
+| That's the way | You drifted off **and came back** | praise |
+| Round done — go rest | A focus round ended and the break started | rest |
+| Plan complete. Nice work. | Every planned round finished | praise |
+
+A few deliberate choices behind this:
+
+- **Teasing beats scolding.** "Your last *just one more* was twenty minutes ago" lands better than
+  "you are off task". You laugh, then go back to work. A tool that nags gets muted.
+- **Praise is not muted.** The positive cards (came back / go rest / plan complete) ignore the
+  "mute for N minutes" rule. Otherwise you'd only ever hear criticism, and you'd stop listening
+  within two days.
+- **The evidence always comes with it.** The card jokes; the line under it says what was actually on
+  screen. Without that, this is just an app being rude for no reason.
+- **No emoji in the copy** — the cards are rendered with a system font, and emoji turn into tofu
+  boxes on some machines.
+
+The same eight faces are reused across the dashboard, so the character that just complained at you
+is the same one you see in the "Now" panel (64px, with a label), in the distraction list, and in the
+recent-verdicts table (34px each). No extra artwork — it's the same files.
 
 ---
 

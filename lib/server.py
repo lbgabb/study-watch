@@ -31,6 +31,12 @@ from .config import ROOT, load_config  # noqa: E402
 from .config import CONFIG_PATH  # noqa: E402
 from . import proc, report, store, vision  # noqa: E402
 from . import plan  # noqa: E402
+from .avatars import with_avatars  # noqa: E402
+from .reminder_copy import pick_card  # noqa: E402
+
+# 允许通过 /avatars/<key>.png 取到的头像（白名单，不做路径拼接）
+AVATAR_KEYS = {"general", "shortvideo", "gaming", "social",
+               "sleepy", "thumbsup", "relax", "celebrate"}
 
 WEB_DIR = ROOT / "web"
 DEFAULT_PORT = 8770
@@ -261,6 +267,29 @@ def _ensure_monitor_alive() -> tuple[bool, str]:
         return True, f"已开始监督（PID {pid}）"
 
 
+def _avatar_for(rec: dict, prev: dict | None = None) -> str:
+    """给一条判定记录算"该显示哪个角色头像"。
+
+    复用提醒卡片的选择逻辑（lib.reminder_copy.pick_card），仪表盘和提醒窗
+    因此是同一套素材、同一套判断，不会出现"弹窗说是游戏、列表说是娱乐"。
+
+    规则：
+      · 休息时段 -> relax（该休息了）
+      · 分心     -> 按类别/进程选（游戏、短视频、社交、发呆…）
+      · 在状态   -> **刚从不专注切回来**才给 thumbsup（回来啦）；
+                    一直专注时用中性头像，否则满屏竖拇指，看着像刷屏
+    """
+    if rec.get("plan_phase") in ("break", "long_break"):
+        return "relax"
+    if not rec.get("on_task"):
+        return pick_card(
+            str(rec.get("category") or ""),
+            process=str(rec.get("process") or ""),
+            title=str(rec.get("title") or ""),
+        )
+    return "thumbsup" if (prev is not None and not prev.get("on_task")) else "general"
+
+
 def _query_day(path: str) -> date | None:
     """从 /api/data?day=YYYY-MM-DD 里取日期；没有或格式不对就返回 None（=今天）。"""
     if "?" not in path:
@@ -373,13 +402,17 @@ def build_data(day: date | None = None) -> dict[str, Any]:
     slotted = _with_slots(all_recs)
     agg = report.aggregate(all_recs)
 
-    # 时间轴：按间隔折算后连续排布
-    timeline = [
-        {"ts": r["ts"], "sec": r["sec"], "on_task": bool(r.get("on_task")),
-         "category": r.get("category") or "其他", "activity": r.get("activity") or "",
-         "basis": r.get("basis") or "", "process": r.get("process") or ""}
-         for r in slotted[-TIMELINE_KEEP:]
-    ]
+    # 时间轴：按间隔折算后连续排布。头像要按"前一条是什么"来算
+    # （判断是否刚从不专注切回专注），所以整体过一次 with_avatars。
+    timeline = with_avatars(
+        [{"ts": r["ts"], "sec": r["sec"], "on_task": bool(r.get("on_task")),
+          "category": r.get("category") or "其他", "activity": r.get("activity") or "",
+          "basis": r.get("basis") or "", "process": r.get("process") or "",
+          "plan_phase": r.get("plan_phase") or "",
+          "title": r.get("title") or ""}
+         for r in slotted[-TIMELINE_KEEP:]],
+        _avatar_for,
+    )
 
     days = []
     for i in range(6, -1, -1):
@@ -409,11 +442,13 @@ def build_data(day: date | None = None) -> dict[str, Any]:
     last = None
     if slotted:
         r = slotted[-1]
+        prev_rec = slotted[-2] if len(slotted) > 1 else None
         last = {
             "ts": r["ts"], "activity": r.get("activity"), "basis": r.get("basis"),
             "category": r.get("category"), "on_task": bool(r.get("on_task")),
             "process": r.get("process"), "confidence": r.get("confidence", 0),
             "cost_usd": r.get("cost_usd", 0),
+            "avatar": _avatar_for(r, prev_rec),
         }
 
     return {
@@ -434,9 +469,9 @@ def build_data(day: date | None = None) -> dict[str, Any]:
             "tokens_out": agg["tokens_out"], "avg_latency_ms": agg["avg_latency_ms"],
             "cat_sec": [{"cat": k, "sec": v} for k, v in agg["cat_sec"].items()],
             "proc_off": _proc_off(slotted),
-            "off_events": agg["off_events"][-20:],
+            "off_events": with_avatars(agg["off_events"][-20:], _avatar_for),
             "timeline": timeline,
-            "recent": slotted[-JSONL_KEEP:],
+            "recent": with_avatars(slotted[-JSONL_KEEP:], _avatar_for),
             "last": last,
         },
         "days": days,
@@ -775,6 +810,19 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/favicon.ico":
             icon = ROOT / "assets" / "study-watch.ico"
             self._file(icon, "image/x-icon") if icon.is_file() else self._send(204, b"", "image/x-icon")
+        elif route.startswith("/avatars/"):
+            # 角色头像（assets/reminder/face/<key>.png）。白名单文件名，
+            # 不做路径拼接，避免 ../ 之类的问题。
+            name = route[len("/avatars/"):]
+            key = name[:-4] if name.endswith(".png") else name
+            if key in AVATAR_KEYS:
+                f = ROOT / "assets" / "reminder" / "face" / f"{key}.png"
+                if f.is_file():
+                    self._file(f, "image/png")
+                else:
+                    self._send(404, b"no avatar", "text/plain; charset=utf-8")
+            else:
+                self._send(404, b"unknown avatar", "text/plain; charset=utf-8")
         elif route == "/api/data":
             try:
                 self._json(build_data(_query_day(self.path)))

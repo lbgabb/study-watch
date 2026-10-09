@@ -106,9 +106,18 @@ function renderCards(d) {
     card.appendChild(el('div', 'empty', '还没有判定记录'));
   } else {
     const now = el('div', 'now');
-    const badge = el('span', 'badge', (last.on_task ? '在状态 · ' : '分心 · ') + (last.category || '其他'));
-    now.appendChild(badge);
+    // 左侧角色头像：和提醒弹窗是同一张脸，一眼能对上"刚才弹的是哪个"
+    const avWrap = el('div', 'avwrap');
+    avWrap.appendChild(avatarEl(last.avatar, 'lg'));
+    const lab = AVATAR_LABEL[last.avatar] || AVATAR_LABEL.general;
+    avWrap.appendChild(el('div', 'avname', lab[0]));
+    now.appendChild(avWrap);
+
     const right = el('div');
+    right.style.flex = '1';
+    right.style.minWidth = '0';
+    right.appendChild(el('span', 'badge',
+      (last.on_task ? '在状态 · ' : '分心 · ') + (last.category || '其他')));
     right.appendChild(el('div', 'txt', last.activity || '（无描述）'));
     const b = el('div', 'basis', '依据：' + (last.basis || '—'));
     right.appendChild(b);
@@ -534,6 +543,7 @@ function renderOffList(d, range) {
   host.appendChild(head);
   for (const e of evs.slice(0, 12)) {
     const row = el('div', 'offrow');
+    row.appendChild(avatarEl(e.avatar, 'sm'));
     row.appendChild(el('span', 't', fmtClock(e.ts)));
     const c = el('span', 'c');
     c.appendChild(el('span', 'pill off', e.category || '其他'));
@@ -712,11 +722,15 @@ function renderRecent(d) {
   }
   const thead = el('thead');
   const tr = el('tr');
-  ['时间', '判定', '在做什么', '程序'].forEach(h => tr.appendChild(el('th', null, h)));
+  ['', '时间', '判定', '在做什么', '程序'].forEach(h => tr.appendChild(el('th', null, h)));
   thead.appendChild(tr); tbl.appendChild(thead);
   const tb = el('tbody');
   for (const r of recs) {
     const row = el('tr');
+    const tdAv = el('td');
+    tdAv.style.width = '42px';
+    tdAv.appendChild(avatarEl(r.avatar, 'sm'));
+    row.appendChild(tdAv);
     row.appendChild(el('td', 'time', fmtClock(r.ts)));
     const td2 = el('td', 'cat');
     const pill = el('span', 'pill ' + (r.on_task ? 'on' : 'off'), (r.on_task ? '在状态' : '分心') + ' · ' + (r.category || ''));
@@ -1131,6 +1145,31 @@ document.getElementById('btnReloadCfg').onclick = () => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeDrawer();
 });
+
+// 角色头像：提醒用的那批素材（assets/reminder/face/*.png）在这里复用。
+// 名字同时充当 alt 与提示，鼠标悬停能知道这张脸代表什么。
+const AVATAR_LABEL = {
+  general: ['开小差', '通用：又走神了'],
+  shortvideo: ['刷视频', '短视频/推荐流'],
+  gaming: ['打游戏', '游戏'],
+  social: ['聊天', '社交软件'],
+  sleepy: ['发呆', '闲置/犯困'],
+  thumbsup: ['回来啦', '刚从不专注切回专注'],
+  relax: ['休息', '计划的休息时段'],
+  celebrate: ['完成', '计划完成'],
+};
+
+function avatarEl(key, size) {
+  const k = AVATAR_LABEL[key] ? key : 'general';
+  const img = document.createElement('img');
+  img.className = 'av ' + (size || 'sm');
+  img.src = '/avatars/' + k + '.png';
+  img.alt = AVATAR_LABEL[k][0];
+  img.title = AVATAR_LABEL[k][1];
+  // 不加 loading="lazy"：这些都是 30-60px 的小图，且同一页面里重复引用同一张，
+  // 浏览器天然只下载一次。懒加载反而会让视口外的头像长时间空着。
+  return img;
+}
 
 // ---------- 专注计划（番茄钟）----------
 // 倒计时在本地按绝对时间戳算，每秒只更新数字与圆环；不重建卡片，

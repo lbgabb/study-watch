@@ -187,23 +187,26 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=3)
     ap.add_argument("--clean", action="store_true", help="删掉演示数据")
-    ap.add_argument("--keep-real", action="store_true",
-                    help="保留已有的真实记录（默认也会保留，只是提醒你别发截图）")
     ap.add_argument("--plan", action="store_true", help="同时写一份演示用的进行中计划")
+    ap.add_argument("--out-dir", default="",
+                    help="写到这个目录而不是 data/logs（截图后直接删目录，"
+                         "不用临时备份/还原真实日志 —— 之前在这里出过事故）")
     args = ap.parse_args()
 
     if args.clean:
         clean()
         return 0
 
-    LOGS.mkdir(parents=True, exist_ok=True)
+    target = Path(args.out_dir).resolve() if args.out_dir else LOGS
+    target.mkdir(parents=True, exist_ok=True)
     rng = random.Random(20261009)          # 固定种子：每次生成一样的数据
     total = 0
     today = date.today()
     for i in range(args.days - 1, -1, -1):
         day = today - timedelta(days=i)
         recs = records_for(day, rng)
-        path = LOGS / f"{day.isoformat()}.jsonl"
+        path = target / f"{day.isoformat()}.jsonl"
+        # 只保留非演示行：同一个文件被生成多次时不重复堆叠
         existing = []
         if path.is_file():
             existing = [l for l in path.read_text(encoding="utf-8").splitlines()
@@ -211,19 +214,22 @@ def main() -> int:
         lines = existing + [json.dumps(r, ensure_ascii=False) for r in recs]
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         total += len(recs)
-        a = sum(1 for r in recs if r["on_task"])
-        print(f"  {day}  写入 {len(recs):>3} 条（在状态 {a} 条，"
+        on = sum(1 for r in recs if r["on_task"])
+        print(f"  {day}  写入 {len(recs):>3} 条（在状态 {on} 条，"
               f"{sum(r['sec'] for r in recs if r['on_task']) / 3600:.1f} 小时）")
 
     if args.plan:
         pomodoro_demo()
 
     print()
-    print(f"共写入 {total} 条演示记录（标记 demo:true）")
-    print("提醒：这些数据用来截图。截完图建议跑 --clean 清掉，")
-    print("      否则仪表盘上的数字会混着演示数据，看着不像你自己的。")
-    if not args.keep_real:
-        print("      （真实记录没被动过，仍在同一批文件里）")
+    print(f"共写入 {total} 条演示记录（标记 demo:true）到 {target}")
+    if args.out_dir:
+        print("  这是独立目录：截完图直接删掉它即可，真实日志没被碰过。")
+        print("  注意：仪表盘读的是 data/logs，所以要在界面上看到演示数据，")
+        print("        仍需要把它放到 data/logs 下（放之前先备份）。")
+    else:
+        print("  提醒：写进了 data/logs，会和真实记录混在一起。")
+        print("        建议改用 --out-dir 指到临时目录，避免混数据。")
     return 0
 
 

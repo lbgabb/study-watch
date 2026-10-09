@@ -176,6 +176,14 @@
   .keyline .dot2{width:9px; height:9px; border-radius:50%; background:var(--green); flex:none}
   .keyline .dot2.no{background:var(--pink)}
   .keyline .src{color:var(--dim); font-size:12px; margin-left:auto}
+  /* 角色头像：同一批提醒素材复用到仪表盘 */
+  .av{flex:none; border-radius:50%; background:#eef2f7; border:1px solid var(--line);
+      object-fit:cover; display:block}
+  .av.lg{width:64px; height:64px}
+  .av.sm{width:34px; height:34px}
+  .now .avwrap{flex:none; display:flex; flex-direction:column; align-items:center; gap:6px}
+  .now .avname{font-size:10.5px; color:var(--faint); text-align:center; line-height:1.2}
+  .offrow .av{margin-top:2px}
   /* 专注计划（番茄钟） */
   .pomo{display:flex; gap:18px; align-items:center; flex-wrap:wrap}
   .pomo .ring{flex:none; position:relative; width:118px; height:118px}

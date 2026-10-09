@@ -225,11 +225,56 @@ def build_card(key: str, lang: str, reason: str = "", *,
     return out
 
 
+def face_crop(im: Image.Image, size: int = 200) -> Image.Image:
+    """从插画里裁一个方形头像（仪表盘用）。
+
+    取偏上的部分：角色是 Q 版，头在上半身，脸大约在高度 15%~55% 之间。
+    不抠图 —— 仪表盘卡片本身就是浅色，插画的白底直接放在上面不会突兀。
+    """
+    w, h = im.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = max(0, int(h * 0.06))
+    if top + side > h:
+        top = max(0, h - side)
+    im = im.crop((left, top, left + side, top + side))
+    return im.resize((size, size), Image.LANCZOS)
+
+
+def build_faces() -> list[Path]:
+    """为每张卡片的角色生成方形头像，供仪表盘复用同一批素材。"""
+    out_dir = OUT / "face"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    made = []
+    for key in card_order():
+        info = CARDS.get(key)
+        if not info:
+            continue
+        src = SRC / info["file"]
+        if not src.is_file():
+            continue
+        with Image.open(src) as im:
+            face = face_crop(im.convert("RGB"))
+        p = out_dir / f"{key}.png"
+        face.save(p, "PNG", optimize=True)
+        made.append(p)
+    return made
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--lang", choices=["zh", "en", "both"], default="both")
     ap.add_argument("--preview", action="store_true", help="额外拼一张总览图")
+    ap.add_argument("--faces", action="store_true", help="只生成仪表盘用的方形头像")
     args = ap.parse_args()
+
+    if args.faces:
+        made = build_faces()
+        print(f"=== 方形头像（{len(made)} 张）===")
+        for p in made:
+            im = Image.open(p)
+            print(f"  {p.name:<16} {im.width}x{im.height}  {p.stat().st_size // 1024} KB")
+        return 0
 
     langs = ["zh", "en"] if args.lang == "both" else [args.lang]
     made: list[tuple[str, str, Path]] = []
