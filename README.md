@@ -934,6 +934,56 @@ Use `「」` for quotes inside non-ASCII prose; do not nest ASCII `"` inside a d
 it truncates the string and the error you get is "perhaps you forgot a comma", which points nowhere
 useful. That one was hit four times in a single file.
 
+
+### Pet window: traps that only show up in a real window
+
+**1. `requestAnimationFrame` never fires in an app-mode window.**
+Everything works under headless, but in a window started with `--app=` the page begins
+with `document.hidden === true`, so **rAF does not fire at all**. `boot()` contained
+`await new Promise(r => requestAnimationFrame(r))` (meant to wait for layout), so startup
+**hung on that line forever** and the UI stayed on its placeholder text.
+
+Worse, it throws nothing: neither `window.onerror` nor `unhandledrejection` catches it.
+The fix is to race rAF against a timer (`Promise.race`, 120ms fallback); the page also
+gained a global error display, because a chromeless window has no console to look at —
+failures have to be shown in the speech bubble.
+
+**2. `model.width` is the *display* width after scaling, not the model's unit size.**
+This model is 4068 units, yet `model.width` returns the current display width (e.g.
+345.94). Using it as the scaling denominator yields `scale = 1`, blowing the character up
+hundreds of times until only a patch of skin is visible. Measure `model.getBounds()` at
+scale 1 and derive the scale from that.
+
+**3. `--window-size` is unreliable.**
+Asking for 320x400 produced a 215x332 viewport (DPI scaling applied again). So the window
+is sized precisely with Win32 `SetWindowPos` after it appears, and the page follows with a
+`ResizeObserver` instead of trusting the launch flag.
+
+**4. `PrintWindow` cannot capture Chromium's WebGL content.**
+Screenshotting the pet window that way returns blank, which made a **working window look
+broken** and cost several rounds of pointless edits. The right tool is CDP's
+`Page.captureScreenshot` (it goes through the compositor); `tools/check_pet_window.py`
+uses that.
+
+**5. After `Page.reload`, the old CDP execution context is gone.**
+`eval_js` then reads empty values, which looks exactly like "the element did not render".
+Poll for what you expect instead of using reload to reset state.
+
+### Your verification method can lie too
+
+Several of the "failures" above were my checks being wrong, not the code:
+
+- **`//[^\n]*` treats `//` inside a URL as a comment**: `"https://api.deepseek.com"`
+  became `"https:`, producing a fake "JSON parse failure". Only treat `//` at the start of
+  a line or after whitespace as a comment.
+- **Compare like with like**: when extracting config keys from the README I counted parent
+  section names as leaves, which invented a "7 extra keys" difference.
+- **Counting `**` per line cannot tell whether bold is balanced**: bold may span lines, so
+  it has to be counted across the whole document (see the comment in
+  `tools/check_readme.py`).
+
+The lesson: when a check fails, suspect the check before the code.
+
 ---
 
 ## How this project was written
