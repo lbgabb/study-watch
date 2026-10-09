@@ -107,7 +107,8 @@
     "long_break_min": 20,
     "rounds": 0,
     "remind_on_break": false,
-    "strict_break": false
+    "strict_break": false,
+    "start_monitor": true
   },
   "api": {
     "base_url": "https://api.deepseek.com",

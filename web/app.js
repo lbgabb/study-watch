@@ -5,6 +5,9 @@ const CAT_COLORS = {
   '游戏': '#f2a65a', '购物': '#4dd0c1', '闲置': '#6b7a8d', '其他': '#8fa6bf'
 };
 const OFF_COLOR = '#f2789f';
+// 休息时段单独一个中性色（青灰）。不用绿也不用红：休息既不是"在状态"
+// 也不是"分心"，而且它的判定不计入统计，用彩色会让人以为算进了专注率。
+const BREAK_COLOR = '#5f7d8c';
 const NS = 'http://www.w3.org/2000/svg';
 
 let busy = false;
@@ -380,17 +383,24 @@ function renderTimeline(d) {
     const end = start + (it.sec || 60) * 1000;
     const cx0 = Math.max(x(start), padL), cx1 = Math.min(x(end), W - padR);
     const w = Math.max(2, cx1 - cx0);
+    // 三态：休息 / 在状态 / 分心。
+    // 休息必须单独画——它的判定不计入统计（后端 aggregate 会排除），
+    // 若照"在状态"着色，时间轴看起来就像一直在学习，而且总时长与
+    // 概览卡的"在状态+分心"对不上（实测差过 594s，是一条 long_break）。
+    const isBreak = !!it.is_break;
     const onTask = it.on_task;
-    const color = onTask ? (CAT_COLORS[it.category] || '#4cc97a') : OFF_COLOR;
-    const h = onTask ? 34 : 20;
-    const y = padT + (onTask ? 0 : 40);
+    const color = isBreak ? BREAK_COLOR
+      : (onTask ? (CAT_COLORS[it.category] || '#4cc97a') : OFF_COLOR);
+    const h = onTask && !isBreak ? 34 : 20;
+    const y = padT + (onTask && !isBreak ? 0 : 40);
     const rect = svgEl('rect', {
       x: cx0, y: y, width: w, height: h, rx: 3,
-      fill: color, opacity: onTask ? .92 : .85
+      fill: color, opacity: isBreak ? .75 : (onTask ? .92 : .85)
     });
     const tip = svgEl('title');
     tip.textContent = fmtClock(it.ts) + '（' + fmtDur(it.sec) + '）\n' +
-      (it.on_task ? '在状态' : '分心') + ' · ' + (it.category || '') + '\n' +
+      (isBreak ? '休息（不计入统计）' : (it.on_task ? '在状态' : '分心')) +
+      ' · ' + (it.category || '') + '\n' +
       (it.activity || '') + '\n依据：' + (it.basis || '');
     rect.appendChild(tip);
     svg.appendChild(rect);
@@ -401,7 +411,7 @@ function renderTimeline(d) {
   const labOn = svgEl('text', { x: padL, y: H - 4, fill: '#4cc97a', 'font-size': 11 });
   labOn.textContent = '上行：在状态（按类别着色）';
   const labOff = svgEl('text', { x: 220, y: H - 4, fill: OFF_COLOR, 'font-size': 11 });
-  labOff.textContent = '下行：分心';
+  labOff.textContent = '下行：分心 / 休息';
   svg.appendChild(labOn); svg.appendChild(labOff);
 
   // 缩放到较小区间时，画一条"现在"的位置线，方便对照（只看今天时才有意义）
@@ -493,7 +503,8 @@ function renderTimeline(d) {
     setTlHint(`显示 ${shown}/${all.length} 段｜在此区间内拖动可再放大，滚轮缩放`);
   }
   // 图例
-  const cats = [...new Set(items.filter(i => i.on_task).map(i => i.category || '其他'))];
+  const cats = [...new Set(items.filter(i => i.on_task && !i.is_break)
+    .map(i => i.category || '其他'))];
   const legend = document.getElementById('tlLegend');
   legend.innerHTML = '';
   for (const c of cats) {
@@ -504,12 +515,17 @@ function renderTimeline(d) {
     s.appendChild(document.createTextNode(c));
     legend.appendChild(s);
   }
-  const s2 = document.createElement('span');
-  const i2 = document.createElement('i');
-  i2.style.background = OFF_COLOR;
-  s2.appendChild(i2);
-  s2.appendChild(document.createTextNode('分心'));
-  legend.appendChild(s2);
+  const mkLegend = (color, text) => {
+    const s = document.createElement('span');
+    const i = document.createElement('i');
+    i.style.background = color;
+    s.appendChild(i);
+    s.appendChild(document.createTextNode(text));
+    legend.appendChild(s);
+  };
+  // 只有真的出现过休息时段才显示这一项，否则图例里多一个用不到的颜色
+  if (items.some(i => i.is_break)) mkLegend(BREAK_COLOR, '休息（不计入统计）');
+  mkLegend(OFF_COLOR, '分心');
 
   // 分心明细：可选跟随当前区间
   const follow = document.getElementById('offFollow');
@@ -1210,6 +1226,7 @@ function pomoSaveSoon() {
             'plan.rounds': pomoSetup.rounds || 0,
             'plan.remind_on_break': !!pomoSetup.remind_on_break,
             'plan.strict_break': !!pomoSetup.strict_break,
+            'plan.start_monitor': pomoSetup.start_monitor !== false,
           },
         }),
       });
@@ -1234,6 +1251,8 @@ async function pomoLoadSaved() {
       rounds: v['plan.rounds'] || 0,
       remind_on_break: !!v['plan.remind_on_break'],
       strict_break: !!v['plan.strict_break'],
+      // 没存过时按 true（默认联动）；存过 false 就尊重用户的选择
+      start_monitor: v['plan.start_monitor'] !== false,
     };
     pomoSetup = Object.assign({ note: pomoSetup.note || '' }, saved);
     renderPomo(null);
@@ -1390,7 +1409,9 @@ function renderPomo(d) {
     setup.appendChild(row2);
 
     const row3 = el('div', 'row');
-    const mkSw = (label, key, title) => {
+    // parent 必须做成参数：mkSw 是闭包，若在函数体里写死 row3.appendChild，
+    // 后面想放到别的行就会全部堆进 row3（踩过一次）
+    const mkSw = (parent, label, key, title) => {
       const lab = el('label', 'sw2');
       const inp = document.createElement('input');
       inp.type = 'checkbox';
@@ -1399,13 +1420,20 @@ function renderPomo(d) {
       lab.appendChild(inp);
       lab.appendChild(el('span', null, label));
       lab.title = title || '';
-      row3.appendChild(lab);
+      parent.appendChild(lab);
     };
-    mkSw('休息时也提醒分心', 'remind_on_break',
+    mkSw(row3, '休息时也提醒分心', 'remind_on_break',
       '默认关：休息就该离开屏幕，这时候弹提醒反而让人不敢休息');
-    mkSw('把休息计入统计', 'strict_break',
+    mkSw(row3, '把休息计入统计', 'strict_break',
       '默认关：休息时的判定不计入专注率，避免"老实休息反而数据难看"');
     setup.appendChild(row3);
+
+    // 单独一行放这个开关：它决定这一轮有没有统计，比另外两个更需要被看见
+    const row4 = el('div', 'row');
+    mkSw(row4, '同时启动监督', 'start_monitor',
+      '默认勾选：开始专注时一起把监督起来，这一轮才会有判定与统计。'
+      + '取消勾选则只计时，不截图、不调用 API。');
+    setup.appendChild(row4);
 
     const acts = el('div', 'acts');
     const bStart = el('button', 'primary', '开始专注');

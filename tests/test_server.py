@@ -89,9 +89,15 @@ def main() -> int:
               abs(cat_sum - total) < max(5.0, total * 0.02),
               f"类别 {cat_sum:.0f}s vs 合计 {total:.0f}s")
         tl_sum = sum(i["sec"] for i in t["timeline"])
-        check("时间轴段长合计 ≈ 在状态+分心",
-              abs(tl_sum - total) < max(5.0, total * 0.02),
-              f"时间轴 {tl_sum:.0f}s vs 合计 {total:.0f}s")
+        # 时间轴要画全，所以包含休息时段；而 on_task_sec + off_task_sec 是统计口径，
+        # 排除了 exclude_from_stats 的休息记录。正确的不变量是：
+        #     时间轴合计 = 统计合计 + 休息时长
+        # （之前写成"时间轴 = 统计合计"，只要跑到过休息时段就会失败——
+        #   实测差过 594s，正好是一条 long_break。见 is_break 字段。）
+        tl_break = sum(i["sec"] for i in t["timeline"] if i.get("is_break"))
+        check("时间轴段长合计 ≈ 在状态+分心+休息",
+              abs(tl_sum - (total + tl_break)) < max(5.0, total * 0.02),
+              f"时间轴 {tl_sum:.0f}s vs 合计 {total:.0f}s + 休息 {tl_break:.0f}s")
         if t["timeline"]:
             secs = [i["sec"] for i in t["timeline"]]
             check("每段时长都在合理区间", all(0 < s2 <= 900 for s2 in secs),

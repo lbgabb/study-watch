@@ -36,6 +36,7 @@ DEFAULTS: dict[str, Any] = {
         "rounds": 0,              # 0 = 不限轮数
         "remind_on_break": False,
         "strict_break": False,
+        "start_monitor": True,    # 点「开始专注」时是否连带启动监督
     },
     "api": {
         "base_url": "https://api.deepseek.com",

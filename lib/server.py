@@ -355,7 +355,19 @@ def _plan_action(action: str, body: dict) -> dict:
         msg = f"已开始：{p.phase_label()} {p.phase_sec // 60} 分钟"
         if p.target_rounds:
             msg += f"｜计划 {p.target_rounds} 轮"
-        return {"ok": True, "plan": plan.describe(p), "message": msg}
+
+        # 联动启动监督。默认开（界面上的复选框默认勾选），传 False 可只当计时器用。
+        # 注意：这是用户点「开始专注」触发的，属于明确意图，所以会写 intent。
+        mon = None
+        if body.get("start_monitor", True):
+            try:
+                mon = ensure_monitor()
+                msg += "｜" + mon["message"]
+            except Exception as e:
+                mon = {"started": False, "error": str(e)}
+                msg += "｜监督没能自动启动（计划照常计时）"
+
+        return {"ok": True, "plan": plan.describe(p), "message": msg, "monitor": mon}
 
     if action == "status":
         p = plan.load()
@@ -406,6 +418,12 @@ def build_data(day: date | None = None) -> dict[str, Any]:
     # （判断是否刚从不专注切回专注），所以整体过一次 with_avatars。
     timeline = with_avatars(
         [{"ts": r["ts"], "sec": r["sec"], "on_task": bool(r.get("on_task")),
+          # 休息时段单独标出来：它的判定不计入统计（aggregate 会排除），
+          # 所以时间轴必须用不同样式画。否则休息会被当作"在状态"着色，
+          # 时间轴总时长也就和概览卡的"在状态+分心"对不上
+          # （实测差过 594s，正好是一条 long_break）。
+          "is_break": bool(r.get("exclude_from_stats")
+                           or r.get("plan_phase") in ("break", "long_break")),
           "category": r.get("category") or "其他", "activity": r.get("activity") or "",
           "basis": r.get("basis") or "", "process": r.get("process") or "",
           "plan_phase": r.get("plan_phase") or "",
@@ -504,6 +522,37 @@ def _spawn_background() -> int:
     return p.pid
 
 
+def _monitor_pids() -> list[int]:
+    """当前在跑的监控进程（不含自己）。"""
+    try:
+        out = subprocess.run(
+            _monitor_cmd("--status", "--pids-only"), cwd=str(ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20, creationflags=0x08000000,
+        ).stdout or ""
+    except Exception:
+        return []
+    return [int(l.strip()) for l in out.splitlines() if l.strip().isdigit()]
+
+
+def ensure_monitor() -> dict[str, Any]:
+    """确保监督在跑：没跑就起来，已经在跑就不重复起。
+
+    为什么需要这个：界面上的「开始专注」原本只开计时器，用户还得再点一次
+    「开始监督」——两个动作，而且忘了点第二次的话，这一整轮 90 分钟不会有
+    任何判定记录，等于白计时（没统计）。做成联动后又必须防重复启动，
+    否则会起出两个监控：重复截图、重复扣费、提醒弹两次。
+    """
+    before = _monitor_pids()
+    if before:
+        return {"started": False, "already": True, "pids": before,
+                "message": "监督已经在跑"}
+    set_intent(True)                     # 记住"用户要它在跑"，进程意外退出后能自愈
+    pid = _spawn_background()
+    return {"started": True, "already": False, "pids": [pid],
+            "message": "已同时启动监督"}
+
+
 def _run_once() -> dict[str, Any]:
     """跑一次 --once，解析出 JSON 结果（这条路径不产生后台进程）。"""
     proc = subprocess.run(
@@ -556,6 +605,7 @@ HOT_KEYS = {
     "plan.long_every": "长休间隔", "plan.long_break_min": "长休时长",
     "plan.rounds": "计划轮数", "plan.remind_on_break": "休息时是否提醒",
     "plan.strict_break": "休息是否计入统计",
+    "plan.start_monitor": "开始专注时是否连带启动监督",
 }
 
 # 允许通过面板修改的字段（白名单，避免误写坏配置）
@@ -576,6 +626,7 @@ EDITABLE: dict[str, type] = {
     "plan.preset": str, "plan.focus_min": int, "plan.break_min": int,
     "plan.long_every": int, "plan.long_break_min": int, "plan.rounds": int,
     "plan.remind_on_break": bool, "plan.strict_break": bool,
+    "plan.start_monitor": bool,
 }
 
 VALID_DETAIL = ("low", "high", "auto")
@@ -687,6 +738,7 @@ def read_config_for_ui() -> dict[str, Any]:
             "plan.rounds": (cfg.get("plan") or {}).get("rounds", 0),
             "plan.remind_on_break": (cfg.get("plan") or {}).get("remind_on_break", False),
             "plan.strict_break": (cfg.get("plan") or {}).get("strict_break", False),
+    "plan.start_monitor": (cfg.get("plan") or {}).get("start_monitor", True),
         },
         "key": vision.key_status(cfg),
         "config_path": str(CONFIG_PATH),

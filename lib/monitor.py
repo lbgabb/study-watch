@@ -676,6 +676,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="显示当前前台应用会命中哪条截图规则、会不会判定")
     parser.add_argument("--status", action="store_true",
                         help="快速体检：监控进程、仪表盘服务、配置是否真的生效")
+    parser.add_argument("--pids-only", action="store_true",
+                        help="只输出正在跑的监控进程号（每行一个），给脚本判断"
+                             "要不要启动用，避免重复启动出两个监控")
     parser.add_argument("--stop", action="store_true",
                         help="停止正在运行的监督进程（按命令行识别，不依赖解释器安装路径）")
     parser.add_argument("--check-api", action="store_true",
@@ -713,6 +716,12 @@ def main(argv: list[str] | None = None) -> int:
         return show_policy(cfg)
 
     if args.status:
+        if args.pids_only:
+            # 只输出进程号，每行一个。没有在跑就什么都不输出（退出码 0）。
+            # 给 _spawn_background 这类"先查再起"的调用方用。
+            for pid in _running_monitor_pids(exclude_self=True):
+                print(pid)
+            return 0
         return show_status(cfg)
 
     if args.check_api:
