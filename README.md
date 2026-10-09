@@ -230,9 +230,39 @@ verdict**, so you can tell what the last check concluded at a glance:
 | Plan complete | excited | Plan complete. Nice work. |
 | Repeated drifting | crying + water splash | That's several in a row. Maybe take a break? |
 
-Click her and she reacts (bubble motion). **If WebGL or the assets are missing she simply doesn't
-appear** — the rest of the dashboard is unaffected. The pet is a bonus; it must never break the
-main feature.
+Click her and she reacts (bubble motion).
+
+### She is also where the plan and the reminders land
+
+She isn't just decoration: **the focus plan and the distraction reminders both surface here.**
+
+| Integration | What you see |
+| --- | --- |
+| **Focus plan** | The bubble shows the countdown and round: `专注中 24:51｜第 1 轮 — 我盯着呢` (focusing), or `休息中 04:32｜第 1 轮` (on a break) |
+| **Distraction reminder** | At the same moment the popup appears, she switches expression and says the same thing: the bubble shows the text actually seen on screen, the label names the situation (`游戏 · 20:11`). Both use the same verdict, so they can never disagree |
+| **Phase change / plan complete** | A tea-sipping motion when a break starts, a celebration motion when the plan finishes |
+
+The focus-plan card in the control panel is **still there** — this is a second entry point to the
+same plan, not a replacement. Change the rhythm or inspect progress on the card; keep her company
+while you work in the pet.
+
+### Toggle and tuning
+
+The settings drawer has a dedicated "Desktop pet" group, **so you can turn it off if it costs too
+much**:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| Enable Live2D pet | on | Turning it off and refreshing stops loading the 3.9 MB model and the renderer; the page goes back to plain charts |
+| Frame rate cap | 20 | Live2D breathing and blinking are indistinguishable at 20fps; higher is smoother but costs more CPU |
+| Show focus plan in the bubble | on | Off hides the countdown from the bubble |
+| Let her speak reminders | on | Off means she only changes expression |
+| Pause when the tab is hidden | on | Stops model updates while the page is not visible |
+
+Changes apply **after a page refresh** (the model reads its config once at load time).
+
+**If WebGL or the assets are missing she simply doesn't appear** — the rest of the dashboard is
+unaffected. The pet is a bonus; it must never break the main feature.
 
 ### Why the pet lives in the browser, not in the reminder popup
 
@@ -553,7 +583,7 @@ capture rules to exclude irrelevant applications.
 ## Tests
 
 ```powershell
-.\selftest.bat        # runs all 17 checks and prints a summary
+.\selftest.bat        # runs all 18 checks and prints a summary
 ```
 
 | Test | What it verifies |
@@ -568,6 +598,7 @@ capture rules to exclude irrelevant applications.
 | `tests/test_server.py` | The dashboard service starts, API fields are complete, timeline/category durations are consistent, start/stop control works |
 | `tests/test_config_api.py` | Settings read/write: whitelist, type and value validation, whole-batch rejection of invalid input, keys returned masked only, config restored byte-for-byte afterwards |
 | `tests/test_plan.py` | Pomodoro: phase advancement, long-break rule, round limit, resume across restart, and **breaks excluded from the focus rate**; the UI half is driven through a real headless browser |
+| `tests/test_pet_integration.py` | Desktop pet: the plan countdown shows up in its bubble, a reminder event switches its expression and speech (and is not overwritten while the reaction is showing), and disabling it really stops loading the model |
 | `tests/control_flow.py` | Control panel flow: start → pause → resume → stop, plus "pausing while stopped starts the monitor" |
 | `tests/test_recovery.py` | Resilience: after the monitor is killed, a user action brings it back |
 | `tests/test_intent.py` | User intent: after pressing stop, repeated status refreshes never resurrect the monitor |
@@ -632,7 +663,7 @@ study-watch/
 ├─ monitor.py               entry point (equivalent to python -m lib.monitor)
 ├─ config.json              configuration (also editable in the dashboard)
 ├─ setup.ps1                one-shot setup: env checks, shortcuts, smoke test
-├─ selftest.ps1 / .bat      one-shot test suite (17 checks)
+├─ selftest.ps1 / .bat      one-shot test suite (18 checks)
 ├─ study-watch.cmd          target of the "study watch" desktop shortcut (pure ASCII wrapper)
 ├─ dashboard.bat / .ps1     target of the "dashboard" desktop shortcut
 ├─ start.ps1 / .bat         run in console mode
@@ -663,7 +694,7 @@ study-watch/
 ├─ web/
 │  ├─ index.html            dashboard page (dark theme, no external dependencies)
 │  └─ app.js                front end: timeline / donut / bars / lists / control / settings
-├─ tests/                   17 self-tests
+├─ tests/                   18 self-tests
 └─ tools/                   diagnostics and generators
 ```
 
@@ -791,7 +822,7 @@ useful. That one was hit four times in a single file.
 
 The code was written by the author pair-programming with AI assistants (Claude / DeepSeek Harness):
 requirements, trade-offs and acceptance were the author's call, while much of the implementation,
-debugging and testing leaned on AI. The test suite (17 checks, including driving the dashboard
+debugging and testing leaned on AI. The test suite (18 checks, including driving the dashboard
 through a headless browser) is the main reason that workflow holds up — it has blocked a good number
 of changes that looked right and weren't.
 

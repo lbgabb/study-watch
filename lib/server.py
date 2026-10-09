@@ -32,6 +32,7 @@ from .config import CONFIG_PATH  # noqa: E402
 from . import proc, report, store, vision  # noqa: E402
 from . import plan  # noqa: E402
 from .avatars import with_avatars  # noqa: E402
+from . import pet_event  # noqa: E402
 from .reminder_copy import pick_card  # noqa: E402
 
 # 允许通过 /avatars/<key>.png 取到的头像（白名单，不做路径拼接）
@@ -498,6 +499,8 @@ def build_data(day: date | None = None) -> dict[str, Any]:
         "available_days": available,
         "plan": plan.describe(plan.load()),
         "plan_presets": plan.presets_for_ui(),
+        # 桌宠要播的事件（监控进程写，仪表盘轮询时读走）。见 lib/pet_event.py
+        "pet": pet_event.latest(),
     }
 
 
@@ -606,6 +609,9 @@ HOT_KEYS = {
     "plan.rounds": "计划轮数", "plan.remind_on_break": "休息时是否提醒",
     "plan.strict_break": "休息是否计入统计",
     "plan.start_monitor": "开始专注时是否连带启动监督",
+    "pet.enabled": "启用 Live2D 桌宠", "pet.max_fps": "桌宠帧率上限",
+    "pet.show_plan": "桌宠显示专注计划", "pet.speak": "桌宠说出提醒内容",
+    "pet.pause_when_hidden": "切到后台时暂停桌宠",
 }
 
 # 允许通过面板修改的字段（白名单，避免误写坏配置）
@@ -627,6 +633,8 @@ EDITABLE: dict[str, type] = {
     "plan.long_every": int, "plan.long_break_min": int, "plan.rounds": int,
     "plan.remind_on_break": bool, "plan.strict_break": bool,
     "plan.start_monitor": bool,
+    "pet.enabled": bool, "pet.max_fps": int, "pet.show_plan": bool,
+    "pet.speak": bool, "pet.pause_when_hidden": bool,
 }
 
 VALID_DETAIL = ("low", "high", "auto")
@@ -739,6 +747,11 @@ def read_config_for_ui() -> dict[str, Any]:
             "plan.remind_on_break": (cfg.get("plan") or {}).get("remind_on_break", False),
             "plan.strict_break": (cfg.get("plan") or {}).get("strict_break", False),
     "plan.start_monitor": (cfg.get("plan") or {}).get("start_monitor", True),
+    "pet.enabled": (cfg.get("pet") or {}).get("enabled", True),
+    "pet.max_fps": (cfg.get("pet") or {}).get("max_fps", 20),
+    "pet.show_plan": (cfg.get("pet") or {}).get("show_plan", True),
+    "pet.speak": (cfg.get("pet") or {}).get("speak", True),
+    "pet.pause_when_hidden": (cfg.get("pet") or {}).get("pause_when_hidden", True),
         },
         "key": vision.key_status(cfg),
         "config_path": str(CONFIG_PATH),

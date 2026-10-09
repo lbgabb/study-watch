@@ -137,5 +137,12 @@
     "save_shots": false,
     "save_api_raw": true,
     "shots_dir": "data/shots"
+  },
+  "pet": {
+    "enabled": true,
+    "max_fps": 20,
+    "show_plan": true,
+    "speak": true,
+    "pause_when_hidden": true
   }
 }

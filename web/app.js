@@ -895,6 +895,22 @@ const CFG_GROUPS = [
     ],
   },
   {
+    title: '桌宠',
+    note: '关掉后仪表盘不加载模型，页面回到纯图表 —— 觉得占资源就关它',
+    fields: [
+      { k: 'pet.enabled', t: 'bool', label: '启用 Live2D 桌宠', hot: true,
+        hint: '关掉后刷新页面生效：不再加载 3.9MB 模型与渲染库' },
+      { k: 'pet.max_fps', t: 'number', label: '帧率上限', hot: true, min: 5, max: 60,
+        hint: '默认 20。Live2D 的呼吸眨眼在 20fps 下看不出差别；调高更顺滑但更吃 CPU' },
+      { k: 'pet.show_plan', t: 'bool', label: '在桌宠气泡里显示专注计划', hot: true,
+        hint: '倒计时与轮次会显示在桌宠的对话框里（控制面板的番茄钟卡片不受影响）' },
+      { k: 'pet.speak', t: 'bool', label: '让桌宠说出提醒内容', hot: true,
+        hint: '分心时气泡显示屏幕上看到的原文，和提醒窗的「依据」一致' },
+      { k: 'pet.pause_when_hidden', t: 'bool', label: '切到后台时暂停渲染', hot: true,
+        hint: '标签页不可见时停掉模型更新，省 CPU' },
+    ],
+  },
+  {
     title: 'API / 模型', note: '改这里要重启监督才生效',
     fields: [
       { k: 'api.base_url', t: 'text', label: '接口地址 base_url', restart: true,
@@ -1221,26 +1237,51 @@ let petApp = null;
 let petModel = null;
 let petExprNow = '';
 let petFailed = false;
+let petConf = {enabled: true, max_fps: 20, show_plan: true, speak: true,
+               pause_when_hidden: true};
+let petLastSeq = 0;
+let petPlan = null;          // 最近一次拿到的计划状态，供倒计时用
+let petBubbleUntil = 0;      // 气泡里"事件文案"的过期时间
 
+// PIXI 6 里 ticker 是 PIXI.Ticker.shared；窗口尺寸变化后 Application 自己
+// 的 ticker 才生效，所以限帧要两处都设，不能只设一处（之前只查 shared
+// 看到 maxFPS=0，就是这个原因）。
+function TICKER() { return PIXI.Ticker.shared; }
+function petSetFps(fps) {
+  try {
+    if (PIXI.Ticker && PIXI.Ticker.shared) PIXI.Ticker.shared.maxFPS = fps;
+    if (petApp && petApp.ticker) petApp.ticker.maxFPS = fps;
+  } catch (e) { /* 忽略 */ }
+}
+
+// 只负责切表情。**不要去重时把界面更新一起跳过** ——
+// 之前这里写成 `if (!force && key === petExprNow) return;`，
+// 结果标签与台词也被一起跳过了：桌宠收到了事件、petLastSeq 也在前进，
+// 但界面上什么都没有变化。界面更新交给调用方。
 function petSetExpr(id, force) {
-  if (!petModel || petFailed) return;
+  if (!petModel || petFailed) return '';
   const key = PET_EXPR[id] || id;
-  if (!force && key === petExprNow) return;
+  if (!force && key === petExprNow) return key;
   const em = petModel.internalModel
     && petModel.internalModel.motionManager
     && petModel.internalModel.motionManager.expressionManager;
-  if (!em) return;
+  if (!em) return key;
   try {
     em.setExpression(key);
     petExprNow = key;
-    const say = document.getElementById('petSay');
-    if (say) say.textContent = PET_TEXT[key] || PET_TEXT.normal || '';
-    const tag = document.getElementById('petTag');
-    if (tag) tag.textContent = key;
   } catch (e) {
     // 某个表情缺失不该让桌宠停摆
     petExprNow = '';
   }
+  return key;
+}
+
+// 按表情更新标签与台词（普通状态切换用）
+function petSayFor(key) {
+  const tag = document.getElementById('petTag');
+  const say = document.getElementById('petSay');
+  if (tag) tag.textContent = key;
+  if (say) say.textContent = PET_TEXT[key] || PET_TEXT.normal || '';
 }
 
 function petMotion(name) {
@@ -1254,11 +1295,37 @@ async function initPet() {
   const tag = document.getElementById('petTag');
   const say = document.getElementById('petSay');
   const note = document.getElementById('petNote');
+  const card = document.getElementById('petCard');
+
+  // 用户可能把桌宠关了。配置在服务端（config.json 的 pet 段），
+  // 这里先问一次；关掉时整个卡片收起，页面回到纯图表 ——
+  // 这是"性能开销不可忽略"对应的逃生门。
+  let petCfg = {enabled: true, max_fps: 20, show_plan: true, speak: true,
+                pause_when_hidden: true};
+  try {
+    const raw = await (await fetch('/api/config')).json();
+    // 注意层级：/api/config 返回 {values:{...}, key, ...}，配置在 values 里
+    const cfg = raw.values || raw;
+    Object.assign(petCfg, {
+      enabled: cfg['pet.enabled'] !== false,
+      max_fps: Number(cfg['pet.max_fps']) || 20,
+      show_plan: cfg['pet.show_plan'] !== false,
+      speak: cfg['pet.speak'] !== false,
+      pause_when_hidden: cfg['pet.pause_when_hidden'] !== false,
+    });
+  } catch (e) { /* 读不到就按默认开 */ }
+  petConf = petCfg;
+
+  if (!petCfg.enabled) {
+    petFailed = true;
+    if (card) card.style.display = 'none';
+    return false;
+  }
   if (typeof PIXI === 'undefined' || !PIXI.live2d) {
     petFailed = true;
     if (tag) tag.textContent = '不可用';
     if (say) say.textContent = '没有加载到 Live2D 运行时（assets/vendor 可能缺失）。';
-    return;
+    return false;
   }
   try {
     const rect = canvas.parentElement.getBoundingClientRect();
@@ -1268,19 +1335,21 @@ async function initPet() {
       view: canvas, width: W, height: H, backgroundAlpha: 0,
       antialias: true, autoStart: true, resolution: window.devicePixelRatio || 1,
       autoDensity: true,
-      // 帧率上限。Live2D 的呼吸/眨眼在 20fps 下完全看不出差别，但 CPU 能省一半：
-      // 实测 60fps 时桌宠约占 0.45 个核，这是本项目里最"贵"的一处。
-      // 需要更高帧率的场合（鼠标跟随）也够用。
-      maxFPS: 20,
+      // 帧率上限。Live2D 的呼吸/眨眼在 20fps 下完全看不出差别，但这是
+      // 本项目里最"贵"的一处渲染，能省就省。可在设置里改。
+      maxFPS: petCfg.max_fps,
     });
-    // 标签页切到后台时停掉渲染。页面不可见时浏览器本来就不合成这一帧，
-    // 但 PIXI 的 ticker 仍在跑模型与物理演算，纯属白烧 CPU。
-    document.addEventListener('visibilitychange', () => {
-      if (!petApp || petFailed) return;
-      const t = PIXI.Ticker.shared;
-      if (document.hidden) t.stop();
-      else { t.maxFPS = 20; t.start(); }
-    });
+    petSetFps(petCfg.max_fps);
+    if (petCfg.pause_when_hidden) {
+      // 页面不可见时浏览器本来就不合成这一帧，但 ticker 仍在跑模型与物理演算，
+      // 纯属白烧 CPU。
+      document.addEventListener('visibilitychange', () => {
+        if (!petApp || petFailed) return;
+        const t = TICKER();
+        if (document.hidden) t.stop();
+        else { petSetFps(petConf.max_fps); t.start(); }
+      });
+    }
     petModel = await PIXI.live2d.Live2DModel.from('/live2d/c_0120.model3.json',
                                                   {autoInteract: true, autoUpdate: true});
     petApp.stage.addChild(petModel);
@@ -1290,7 +1359,7 @@ async function initPet() {
     petModel.position.set(W / 2, H / 2 + 6);
     if (tag) tag.textContent = '就绪';
     if (note) note.textContent = '';
-    petSetExpr('star', true);
+    petSayFor(petSetExpr('star', true));
     petMotion('idle');
     // 点一下会有反应
     canvas.style.cursor = 'pointer';
@@ -1312,32 +1381,113 @@ async function initPet() {
 // 只有"刚从不专注切回专注"才给鼓励，一直专注就用常态表情（否则像刷屏）。
 function petSyncFromData(d) {
   if (!petModel || petFailed) return;
+  petPlan = (d && d.plan) || null;
+
+  // 先看监控进程有没有写新事件（分心提醒 / 阶段切换 / 计划完成）。
+  // 有就直接按事件演，比按"最新一条判定"猜更准，也和弹窗说同一件事。
+  const ev = (d && d.pet && d.pet.latest) || null;
+  if (ev && ev.seq > petLastSeq) {
+    petLastSeq = ev.seq;
+    petReact(ev);
+    return;
+  }
+
   const t = (d && d.today) || {};
   const last = t.last;
-  if (!last) { petSetExpr('blank'); return; }
-  const p = (d && d.plan) || {};
-  if (p.finished) { petSetExpr('done'); return; }
-  if (p.active && p.is_break) { petSetExpr('breakTime'); return; }
+  const p = petPlan || {};
 
+  // 刚演过的提醒还在"反应期"内：不要用常规状态把它盖掉。
+  // 这里是第二个踩过的坑 —— petReact 设好了表情与台词，紧接着这段常规流程
+  // 又跑了一遍，把标签和台词覆盖回默认值，看起来就像"事件完全没生效"。
+  if (Date.now() < petBubbleUntil) return;
+
+  // 选表情：先把键算出来，最后统一更新标签与台词。
+  // 之前是每条分支各自调用并 return，而 petSetExpr 在"表情没变"时会提前
+  // 返回，把界面更新也一起跳过了 —— 表现为桌宠收到了事件、内部序号也在走，
+  // 但界面上什么都没变。
+  let key = 'star';
+  if (p.finished) key = 'done';
+  else if (p.active && p.is_break) key = 'breakTime';
+  else if (!last) key = 'blank';
+  else {
+    const avatar = last.avatar;
+    if (avatar === 'thumbsup') key = 'sweat';
+    else if (avatar === 'celebrate') key = 'done';
+    else if (avatar === 'relax') key = 'breakTime';
+    else if (avatar === 'shortvideo') key = 'offShort';
+    else if (avatar === 'gaming') key = 'offGame';
+    else if (avatar === 'social') key = 'offSocial';
+    else if (avatar === 'sleepy') key = 'sleepy';
+    else if (avatar === 'general') key = last.on_task ? 'star' : 'offGeneral';
+  }
+  petSayFor(petSetExpr(key));
+
+  // 最近几条连续分心 -> 播一个动作，但只在真的连续时
   const recs = t.recent || [];
-  const prev = recs.length >= 2 ? recs[recs.length - 2] : null;
-  const avatar = last.avatar;
-  if (avatar === 'thumbsup') petSetExpr('sweat');
-  else if (avatar === 'celebrate') petSetExpr('done');
-  else if (avatar === 'relax') petSetExpr('breakTime');
-  else if (avatar === 'shortvideo') petSetExpr('offShort');
-  else if (avatar === 'gaming') petSetExpr('offGame');
-  else if (avatar === 'social') petSetExpr('offSocial');
-  else if (avatar === 'sleepy') petSetExpr('sleepy');
-  else if (avatar === 'general') {
-    petSetExpr(last.on_task ? 'star' : 'offGeneral');
-  } else petSetExpr('star');
-
-  // 时间轴上最近几条连续分心 -> 升级成"哭"，但只在真的连续时
-  if (!last.on_task && recs.length >= 3) {
+  if (last && !last.on_task && recs.length >= 3) {
     const tail = recs.slice(-3);
     if (tail.every(r => r && !r.on_task)) petMotion('splash');
   }
+}
+
+// 卡片键 -> 场景名。事件里的 card 就是提醒卡片的键
+// （general/gaming/shortvideo/social/sleepy/thumbsup/relax/celebrate），
+// 所以直接用这张表，不要拿它去反查 PET_EXPR ——
+// PET_EXPR 是"状态键 -> 表情 id"，两张表的键不是一回事，
+// 反查会查不到而显示成 'gaming' 这种内部名（踩过这个坑）。
+const PET_CARD_LABEL = {
+  general: '分心', shortvideo: '刷视频', gaming: '游戏', social: '聊天',
+  sleepy: '发呆', thumbsup: '回来啦', relax: '休息', celebrate: '完成',
+};
+
+// 按监控进程写来的事件演一次。
+// 这是"提醒集成进桌宠"的落点：提醒窗弹出时，桌宠同步换表情 + 说同一句话。
+function petReact(ev) {
+  // 事件里的 card 是提醒卡片的键（general/gaming/shortvideo…），
+  // 与 PET_EXPR 的键同名，所以直接当表情 id 用。
+  const card = ev.card || 'offGeneral';
+  const key = petSetExpr(card, true);
+  if (petConf.speak) {
+    const say2 = document.getElementById('petSay');
+    // 气泡优先显示事件里的实际内容（屏幕上看到的原文），
+    // 比固定台词更有信息量，也和提醒窗里的"依据"一致。
+    const line = ev.activity || PET_TEXT[key] || '';
+    if (say2 && line) say2.textContent = line;
+    // 提醒内容停留多久。太短会看不清（原来 15 秒，实测连测试都跑不过），
+    // 太长又会一直占着倒计时不显示。
+    petBubbleUntil = Date.now() + 30000;
+  }
+  // 计划完成 / 进入休息 播个动作，让"有事发生"更容易被注意到
+  if (ev.kind === 'plan_done') petMotion('bubble');
+  else if (ev.kind === 'break_start') petMotion('ketchup');
+  else if (ev.kind === 'reminder' || ev.kind === 'off_task') petMotion('splash');
+  const tag = document.getElementById('petTag');
+  if (tag) {
+    tag.textContent = (PET_CARD_LABEL[card] || card) +
+      (ev.time ? ' · ' + ev.time : '');
+  }
+}
+
+// 每秒走一次：气泡在"提醒内容"和"番茄钟倒计时"之间切换。
+// 放在每秒的 tick 里而不是 5 秒轮询里，倒计时才不会一跳一跳。
+function petTick() {
+  if (!petModel || petFailed || !petConf.show_plan) return;
+  const say2 = document.getElementById('petSay');
+  if (!say2) return;
+  if (Date.now() < petBubbleUntil) return;      // 还在显示刚发生的提醒
+  const p = petPlan;
+  if (!p || !p.active) return;
+  const sec = Math.max(0, Number(p.remaining_sec) || 0);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  const clock = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  const round = p.target_rounds
+    ? `第 ${p.round}/${p.target_rounds} 轮`
+    : `第 ${p.round} 轮`;
+  say2.textContent = p.is_break
+    ? `休息中 ${clock}｜${round} — 离开屏幕走两步吧`
+    : `专注中 ${clock}｜${round} — 我盯着呢`;
+  // 倒计时也要往下走，否则气泡里的数字会停在轮询那一刻
+  p.remaining_sec = sec - 1;
 }
 
 // 倒计时在本地按绝对时间戳算，每秒只更新数字与圆环；不重建卡片，
@@ -1758,6 +1908,8 @@ timer = setInterval(refresh, 5000);
 initPet().then(ok => { if (ok) refresh(); });
 // 倒计时单独每秒走：5 秒轮询会让秒数一跳一跳
 setInterval(tickPomo, 1000);
+// 桌宠的气泡每秒走一次：里面要么是刚发生的提醒，要么是番茄钟倒计时
+setInterval(petTick, 1000);
 // 读回上次保存的节奏（自定义数值存在 config.json 里，不是浏览器内存）
 pomoLoadSaved();
 

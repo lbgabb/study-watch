@@ -375,6 +375,18 @@ class Notifier:
         reminder = self.cfg.get("reminder", {})
         if not reminder.get("enabled", True) or self.muted:
             return
+        # 顺便把这件事写给桌宠（它读 data/pet_event.json）。
+        # 放在这里而不是各个调用点：所有对用户的通知都经过 notify()，
+        # 这样桌宠和弹窗永远说同一件事，不会一个说游戏一个说娱乐。
+        try:
+            from .pet_event import emit
+            key = card_key or pick_card(str(verdict.get("category") or ""),
+                                        returning=returning, event=event)
+            emit("reminder" if not card_key else (event or "reminder"), key,
+                 activity=str(verdict.get("activity") or ""),
+                 basis=str(verdict.get("basis") or ""))
+        except Exception:
+            pass
         if reminder.get("sound", True):
             _beep()
         if self.window is not None:

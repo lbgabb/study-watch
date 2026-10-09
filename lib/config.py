@@ -66,6 +66,15 @@ DEFAULTS: dict[str, Any] = {
         "save_api_raw": True,
         "shots_dir": "data/shots",
     },
+    # Live2D 桌宠。它住在仪表盘里（浏览器），不在提醒弹窗里 ——
+    # 提醒窗是 tkinter，没有 WebGL。详见 README 的「桌宠」一节。
+    "pet": {
+        "enabled": True,          # 关掉后仪表盘不加载模型，页面回到纯图表
+        "max_fps": 20,            # 帧率上限。Live2D 的呼吸眨眼 20fps 看不出差别
+        "show_plan": True,        # 把专注计划的倒计时/轮次画在桌宠旁边
+        "speak": True,            # 让它把提醒内容说出来（气泡）
+        "pause_when_hidden": True,  # 标签页切到后台时停止渲染
+    },
 }
 
 

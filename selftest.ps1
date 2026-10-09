@@ -25,6 +25,7 @@ $steps = @(
     @{ Name = '设置读写（校验/白名单/还原）';    Script = 'tests\test_config_api.py' },
     @{ Name = '仪表盘界面交互（无头浏览器实测）'; Script = 'tools\cdp_check.py http://127.0.0.1:8770/' },
     @{ Name = '番茄钟（状态机 + 界面实测）';      Script = 'tests\test_plan.py' },
+    @{ Name = '桌宠集成（计划倒计时/提醒事件/开关）'; Script = 'tests\test_pet_integration.py' },
     @{ Name = '控制面板流程（开/暂停/恢复/停）'; Script = 'tests\control_flow.py' },
     @{ Name = '服务韧性（监控被杀后自动拉起）';  Script = 'tests\test_recovery.py --port 0' },
     @{ Name = '用户意图（停止后不被刷新拉起）';  Script = 'tests\test_intent.py --port 0' },
