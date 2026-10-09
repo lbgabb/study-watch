@@ -601,7 +601,7 @@ capture rules to exclude irrelevant applications.
 ## Tests
 
 ```powershell
-.\selftest.bat        # runs all 18 checks and prints a summary
+.\selftest.bat        # runs all 19 checks and prints a summary
 ```
 
 | Test | What it verifies |
@@ -617,6 +617,7 @@ capture rules to exclude irrelevant applications.
 | `tests/test_config_api.py` | Settings read/write: whitelist, type and value validation, whole-batch rejection of invalid input, keys returned masked only, config restored byte-for-byte afterwards |
 | `tests/test_plan.py` | Pomodoro: phase advancement, long-break rule, round limit, resume across restart, and **breaks excluded from the focus rate**; the UI half is driven through a real headless browser |
 | `tests/test_pet_integration.py` | Desktop pet: the plan countdown shows up in its bubble, a reminder event switches its expression and speech (and is not overwritten while the reaction is showing), and disabling it really stops loading the model |
+| `tests/test_pet_window_integration.py` | Standalone pet window: a reminder event switches expression and speech, the bubble shows the plan countdown, and **the buttons in the window really do start/stop the plan** |
 | `tests/control_flow.py` | Control panel flow: start → pause → resume → stop, plus "pausing while stopped starts the monitor" |
 | `tests/test_recovery.py` | Resilience: after the monitor is killed, a user action brings it back |
 | `tests/test_intent.py` | User intent: after pressing stop, repeated status refreshes never resurrect the monitor |
@@ -681,7 +682,7 @@ study-watch/
 ├─ monitor.py               entry point (equivalent to python -m lib.monitor)
 ├─ config.json              configuration (also editable in the dashboard)
 ├─ setup.ps1                one-shot setup: env checks, shortcuts, smoke test
-├─ selftest.ps1 / .bat      one-shot test suite (18 checks)
+├─ selftest.ps1 / .bat      one-shot test suite (19 checks)
 ├─ study-watch.cmd          target of the "study watch" desktop shortcut (pure ASCII wrapper)
 ├─ dashboard.bat / .ps1     target of the "dashboard" desktop shortcut
 ├─ start.ps1 / .bat         run in console mode
@@ -712,7 +713,7 @@ study-watch/
 ├─ web/
 │  ├─ index.html            dashboard page (dark theme, no external dependencies)
 │  └─ app.js                front end: timeline / donut / bars / lists / control / settings
-├─ tests/                   18 self-tests
+├─ tests/                   19 self-tests
 └─ tools/                   diagnostics and generators
 ```
 
@@ -840,7 +841,7 @@ useful. That one was hit four times in a single file.
 
 The code was written by the author pair-programming with AI assistants (Claude / DeepSeek Harness):
 requirements, trade-offs and acceptance were the author's call, while much of the implementation,
-debugging and testing leaned on AI. The test suite (18 checks, including driving the dashboard
+debugging and testing leaned on AI. The test suite (19 checks, including driving the dashboard
 through a headless browser) is the main reason that workflow holds up — it has blocked a good number
 of changes that looked right and weren't.
 

@@ -237,9 +237,71 @@ async function boot() {
       } catch (e) { /* 忽略 */ }
     });
   }
+  renderPlanBar(null);       // 先把控制条画出来（未开始状态）
   poll();
   setInterval(poll, 4000);
   setInterval(tick, 1000);
+}
+
+// 计划控制条：桌宠这边也能直接开始/暂停/结束专注。
+// 以前只有仪表盘能操作 —— 桌宠只能看不能动，想暂停还得切到浏览器。
+function renderPlanBar(p) {
+  const bar = $('planbar');
+  if (!bar) return;
+  const active = !!(p && p.active);
+  const isBreak = !!(p && p.is_break);
+  const sig = [active, isBreak, active ? p.round : 0,
+               active ? Math.round((p.remaining_sec || 0) / 60) : 0].join('|');
+  if (bar.dataset.sig === sig) return;      // 没变化就别重建，免得按钮被点掉
+  bar.dataset.sig = sig;
+  bar.innerHTML = '';
+
+  const mkBtn = (text, cls, fn, title) => {
+    const b = document.createElement('button');
+    b.textContent = text;
+    if (cls) b.className = cls;
+    if (title) b.title = title;
+    b.onclick = fn;
+    bar.appendChild(b);
+    return b;
+  };
+
+  if (!active) {
+    mkBtn('开始专注', 'primary', () => planAction({action: 'start'}, '开始专注'),
+          '按你在仪表盘里设定的节奏开始一轮');
+    const info = document.createElement('span');
+    info.className = 'pinfo';
+    info.textContent = p && p.finished && p.stop_reason ? '上次已结束' : '';
+    bar.appendChild(info);
+    return;
+  }
+
+  mkBtn(isBreak ? '结束休息，继续' : '提前休息', '', () =>
+    planAction({action: 'skip'}, isBreak ? '继续专注' : '提前休息'),
+    isBreak ? '跳过休息直接进入下一轮' : '跳过剩余时间，直接去休息');
+  mkBtn('结束计划', 'warn', () => planAction({action: 'stop'}, '结束计划'),
+        '结束这一轮专注计划（不影响监督）');
+  const info = document.createElement('span');
+  info.className = 'pinfo';
+  const s = Math.max(0, Number(p.remaining_sec) || 0);
+  const clock = String(Math.floor(s / 60)).padStart(2, '0') + ':' +
+                String(s % 60).padStart(2, '0');
+  info.textContent = (isBreak ? '休息 ' : '专注 ') + clock;
+  bar.appendChild(info);
+}
+
+async function planAction(body, label) {
+  try {
+    const r = await fetch('/api/plan', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    say(label + '：' + (d.message || (d.ok ? '已执行' : '失败')), 6000);
+    await poll();
+  } catch (e) {
+    say('操作失败：' + (e && e.message ? e.message : e), 6000);
+  }
 }
 
 async function poll() {
@@ -247,6 +309,7 @@ async function poll() {
   try {
     const d = await (await fetch('/api/pet')).json();
     plan = d.plan || null;
+    renderPlanBar(plan);
     const ev = d.event || null;
     if (ev && ev.seq > lastSeq) {
       lastSeq = ev.seq;
@@ -290,8 +353,9 @@ function react(ev) {
   else if (ev.kind === 'break_start') motion('ketchup');
   else if (ev.kind === 'reminder' || ev.kind === 'off_task') motion('splash');
   const t = $('bar') && $('bar').querySelector('.title');
-  if (t) t.textContent = (PET_CARD_LABEL[card] || '鲸鱼娘') +
-    (ev.time ? ' · ' + ev.time : '');
+  // 只显示场景名。之前还带上了 ev.time（形如 00:02:21），看上去像个
+  // 意味不明的计时器，而且和下面的番茄钟倒计时容易混。
+  if (t) t.textContent = PET_CARD_LABEL[card] || '鲸鱼娘';
 }
 
 // 每秒：气泡在"刚发生的事"和"番茄钟倒计时"之间切换
@@ -309,6 +373,9 @@ function tick() {
     ? `休息中 ${clock}｜${round} — 离开屏幕走两步吧`
     : `专注中 ${clock}｜${round} — 我盯着呢`, 0);
   p.remaining_sec = s - 1;   // 本地下走，否则数字会停在轮询那一刻
+  // 控制条右侧的倒计时也跟着走。它按"分钟数"做签名，
+  // 所以只在跨分钟时重建，不会每秒把按钮重建一遍（否则点击会丢）。
+  renderPlanBar(p);
 }
 
 boot();

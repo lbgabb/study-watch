@@ -208,14 +208,30 @@ def main() -> int:
         cdp.call("Runtime.enable")
         time.sleep(3)   # 等页面把 fetch 和首次渲染做完
 
+        # 时间轴那一整组断言都假定"当前视图里有数据"。跨零点之后今天往往是空的
+        # （今天的判定还没开始产生），此时时间轴按设计**不画 SVG**、
+        # 只显示"还没有判定记录"。整组会连环失败 —— 那是测试的假设问题，
+        # 不是应用的 bug（实测踩过：10-10 凌晨跑，9 项全红）。
+        # 所以**在所有断言之前**先探一次，今天空就切到最近有数据的一天。
+        COUNT_BARS = "document.querySelectorAll('#timeline svg rect[fill]').length"
+        days = cdp.eval_js(
+            "Array.from(document.querySelectorAll('#tlDay option')).map(o=>o.value)")
+        if cdp.eval_js(COUNT_BARS) == 0 and isinstance(days, list) and len(days) > 1:
+            pick = days[1]                     # 下拉第一项是今天，第二项是上一天
+            cdp.eval_js(f"""(() => {{
+                const s = document.getElementById('tlDay');
+                s.value = {pick!r};
+                s.dispatchEvent(new Event('change'));
+            }})()""")
+            time.sleep(2)
+            print(f"  （今天还没有判定记录，时间轴相关断言改在 {pick} 上做）")
+
         print("=== 页面基础 ===")
         title = cdp.eval_js("document.title")
         check("页面已加载", bool(title), str(title))
         check("没有前端报错", cdp.eval_js("!!document.getElementById('timeline').querySelector('svg')"),
               "时间轴 SVG 存在")
 
-        # 只数"判定段"：排除拖选遮罩等没有 fill 的辅助元素
-        COUNT_BARS = ("document.querySelectorAll('#timeline svg rect[fill]').length")
         tag = "document.getElementById('tlTag').textContent"
         hint = "document.getElementById('tlHint').textContent"
 

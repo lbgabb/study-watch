@@ -60,6 +60,21 @@
   }
   body.colorkey #say { background:rgba(20,28,38,.86); }
   #hint { font-size:10.5px; color:var(--dim); text-align:center; padding:0 8px 6px; }
+  /* 计划控制条：桌宠这边也能开始/暂停/结束专注，不必再开仪表盘 */
+  #planbar {
+    flex:none; display:flex; gap:5px; align-items:center;
+    padding:0 8px 6px; flex-wrap:wrap;
+  }
+  #planbar button {
+    -webkit-app-region:no-drag;
+    font:11.5px/1 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+    padding:5px 9px; border-radius:7px; border:1px solid var(--line);
+    background:#2a3a4d; color:#dbe4ee; cursor:pointer;
+  }
+  #planbar button:hover { background:#35485e; }
+  #planbar button.primary { background:#2f6f4f; border-color:#3d8a63; color:#fff; }
+  #planbar button.warn { background:#5a3a3a; border-color:#7a4a4a; }
+  #planbar .pinfo { font-size:10.5px; color:var(--dim); margin-left:auto; }
 </style>
 
 <div id="root">
@@ -71,8 +86,9 @@
     <button class="btn" id="bClose" title="关掉桌宠窗口">×</button>
   </div>
   <div id="stage"><canvas id="pet"></canvas></div>
+  <div id="planbar"></div>
   <div id="say">正在把鲸鱼娘请出来…</div>
-  <div id="hint">拖动顶栏可移动窗口</div>
+  <div id="hint">拖动顶栏可移动窗口 · 点角色摸摸头 · 双击催一句</div>
 </div>
 
 <script src="/vendor/live2dcubismcore.min.js"></script>

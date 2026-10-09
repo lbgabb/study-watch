@@ -551,7 +551,7 @@ python monitor.py --check-api
 ## 自测
 
 ```powershell
-.\selftest.bat        # 一键跑全部 18 项，最后给出汇总
+.\selftest.bat        # 一键跑全部 19 项，最后给出汇总
 ```
 
 | 测试 | 验证什么 |
@@ -570,6 +570,7 @@ python monitor.py --check-api
 | `tests/test_cross_process_lock.py` | 跨进程启动互斥：多个独立进程并发启动只起一个监控 |
 | `tests/test_plan.py` | 番茄钟：阶段推进、长休规则、轮次上限、跨重启续上，以及**休息不计入专注率**；界面部分用无头浏览器实点 |
 | `tests/test_pet_integration.py` | 桌宠集成：计划倒计时出现在气泡里、提醒事件会换表情并说同一句话（且反应期内不被覆盖）、关掉后确实不再加载模型 |
+| `tests/test_pet_window_integration.py` | 独立桌宠窗口：提醒事件换成表情并说同一句话、气泡显示计划倒计时、**在窗口里点按钮能真的开始/结束计划** |
 | `tools/cdp_check.py` | **仪表盘界面交互**（无头 Edge + CDP 实测）：时间轴预设/自定义区间/拖选缩放、提示不被自动重绘冲掉、日期切换与历史标注 |
 | `monitor.py --dry-run` | 截图与前台窗口采集链路是否正常（不调用 API、不花钱） |
 
@@ -625,7 +626,7 @@ study-watch/
 ├─ monitor.py               入口（等价 python -m lib.monitor）
 ├─ config.json              配置（也可在仪表盘里改）
 ├─ setup.ps1                一键部署：查环境、建快捷方式、冒烟测试
-├─ selftest.ps1 / .bat      一键自测（18 项）
+├─ selftest.ps1 / .bat      一键自测（19 项）
 ├─ study-watch.cmd          桌面「学习监督」快捷方式的目标（纯 ASCII 外壳）
 ├─ dashboard.bat / .ps1     桌面「学习监督 仪表盘」快捷方式的目标
 ├─ start.ps1 / .bat         控制台模式运行
@@ -655,7 +656,7 @@ study-watch/
 ├─ web/
 │  ├─ index.html            仪表盘页面（深色主题，无外部依赖）
 │  └─ app.js                前端：时间轴 / 环形图 / 柱状图 / 明细 / 控制 / 设置
-├─ tests/                   18 项自测
+├─ tests/                   19 项自测
 └─ tools/                   排障与生成工具
 ```
 
@@ -763,7 +764,7 @@ python tools\make_demo_data.py --clean           # 清掉演示记录
 ## 这个项目是怎么写出来的
 
 代码由作者与 AI 编程助手（Claude / DeepSeek Harness）结对完成：需求、取舍、验收由作者把关，
-具体实现、调试与测试大量借助 AI 完成。测试套件（18 项，含无头浏览器实测仪表盘交互）
+具体实现、调试与测试大量借助 AI 完成。测试套件（19 项，含无头浏览器实测仪表盘交互）
 是这套流程能站得住脚的主要原因——它挡下过不少"看起来对、实际有问题"的改动。
 
 细节与踩坑记录见上面的[开发笔记](#开发笔记)。
