@@ -1268,6 +1268,18 @@ async function initPet() {
       view: canvas, width: W, height: H, backgroundAlpha: 0,
       antialias: true, autoStart: true, resolution: window.devicePixelRatio || 1,
       autoDensity: true,
+      // 帧率上限。Live2D 的呼吸/眨眼在 20fps 下完全看不出差别，但 CPU 能省一半：
+      // 实测 60fps 时桌宠约占 0.45 个核，这是本项目里最"贵"的一处。
+      // 需要更高帧率的场合（鼠标跟随）也够用。
+      maxFPS: 20,
+    });
+    // 标签页切到后台时停掉渲染。页面不可见时浏览器本来就不合成这一帧，
+    // 但 PIXI 的 ticker 仍在跑模型与物理演算，纯属白烧 CPU。
+    document.addEventListener('visibilitychange', () => {
+      if (!petApp || petFailed) return;
+      const t = PIXI.Ticker.shared;
+      if (document.hidden) t.stop();
+      else { t.maxFPS = 20; t.start(); }
     });
     petModel = await PIXI.live2d.Live2DModel.from('/live2d/c_0120.model3.json',
                                                   {autoInteract: true, autoUpdate: true});
