@@ -1294,7 +1294,7 @@ async function initPet() {
   if (!canvas) return;
   const tag = document.getElementById('petTag');
   const say = document.getElementById('petSay');
-  const note = document.getElementById('petNote');
+  const note = document.getElementById('petNoteHint');
   const card = document.getElementById('petCard');
 
   // 用户可能把桌宠关了。配置在服务端（config.json 的 pet 段），
@@ -1901,6 +1901,28 @@ for (const id of ['tlFrom', 'tlTo']) {
   node.addEventListener('keydown', e => { if (e.key === 'Enter') tlApplyCustom(); });
 }
 document.getElementById('offFollow').onchange = () => renderTimeline(null);
+
+// 独立桌宠窗口的开关。它是个脱离浏览器的进程，所以这里只是转发请求，
+// 状态要回服务端问（不能靠前端自己记）。
+async function petWindowAction(action) {
+  const tag = document.getElementById('petState');
+  if (tag) tag.textContent = '处理中…';
+  try {
+    const r = await fetch('/api/pet-window', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action}),
+    });
+    const d = await r.json();
+    if (tag) tag.textContent = d.running ? '桌宠窗口：运行中' : '桌宠窗口：未运行';
+  } catch (e) {
+    if (tag) tag.textContent = '操作失败';
+  }
+}
+const bOpen = document.getElementById('petOpen');
+if (bOpen) bOpen.onclick = () => petWindowAction('open');
+const bShut = document.getElementById('petShut');
+if (bShut) bShut.onclick = () => petWindowAction('close');
+petWindowAction('status');
 
 refresh();
 timer = setInterval(refresh, 5000);

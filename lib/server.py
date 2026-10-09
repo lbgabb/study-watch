@@ -872,9 +872,51 @@ class Handler(BaseHTTPRequestHandler):
             self._file(WEB_DIR / "index.html", "text/html; charset=utf-8")
         elif route == "/app.js":
             self._file(WEB_DIR / "app.js", "application/javascript; charset=utf-8")
+        elif route == "/pet.js":
+            self._file(WEB_DIR / "pet.js", "application/javascript; charset=utf-8")
+        elif route == "/pet":
+            # 独立桌宠窗口用的页面（无顶栏、只有角色与气泡）。
+            # 与仪表盘共用同一个服务，所以用户只开桌宠也能用。
+            self._file(WEB_DIR / "pet.html", "text/html; charset=utf-8")
+        elif route == "/api/pet":
+            # 桌宠专用的轻量接口：只给窗口需要的东西，
+            # 不拉整天的时间轴与图表数据（那个接口是给仪表盘用的）。
+            try:
+                cfg = load_config()
+                pet_cfg = cfg.get("pet") or {}
+                day = _records_on(date.today())
+                slotted = _with_slots(day)
+                last = None
+                if slotted:
+                    r = slotted[-1]
+                    prev_rec = slotted[-2] if len(slotted) > 1 else None
+                    last = {"ts": r["ts"], "on_task": bool(r.get("on_task")),
+                            "activity": r.get("activity") or "",
+                            "category": r.get("category") or "",
+                            "avatar": _avatar_for(r, prev_rec)}
+                self._json({
+                    "pet.enabled": pet_cfg.get("enabled", True),
+                    "pet.max_fps": pet_cfg.get("max_fps", 20),
+                    "pet.show_plan": pet_cfg.get("show_plan", True),
+                    "pet.speak": pet_cfg.get("speak", True),
+                    "pet.pause_when_hidden": pet_cfg.get("pause_when_hidden", True),
+                    "plan": plan.describe(plan.load()),
+                    "last": last,
+                    "event": pet_event.latest().get("latest"),
+                })
+            except Exception as e:
+                self._json({"error": str(e)})
         elif route == "/favicon.ico":
             icon = ROOT / "assets" / "study-watch.ico"
             self._file(icon, "image/x-icon") if icon.is_file() else self._send(204, b"", "image/x-icon")
+        elif route == "/api/pet-window":
+            # 独立桌宠窗口是否在跑（POST 那个分支负责开关）
+            try:
+                from lib import pet_window as pw
+                pids = pw.running_pids()
+                self._json({"ok": True, "running": bool(pids), "pids": pids})
+            except Exception as e:
+                self._json({"ok": False, "running": False, "message": str(e)})
         elif route.startswith("/live2d/") or route.startswith("/vendor/"):
             # Live2D 模型与运行时。只允许白名单扩展名，且路径里不许出现 ..
             rel = route.lstrip("/")
@@ -984,6 +1026,30 @@ class Handler(BaseHTTPRequestHandler):
             elif route == "/api/plan":
                 body = self._read_json_body() or {}
                 self._json(_plan_action(str(body.get("action") or "start"), body))
+            elif route == "/api/pet-window":
+                # 独立桌宠窗口的开关。窗口是**另一个进程**，所以这里只负责
+                # 起/停它并回报状态；关掉窗口不影响监督与统计。
+                body = self._read_json_body() or {}
+                action = str(body.get("action") or "status")
+                from lib import pet_window as pw
+                if action == "open":
+                    flags = 0x00000008 | 0x08000000
+                    subprocess.Popen(
+                        [sys.executable, str(ROOT / "lib" / "pet_window.py")],
+                        cwd=str(ROOT), creationflags=flags,
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, close_fds=True)
+                    time.sleep(1.2)
+                    pids = pw.running_pids()
+                    self._json({"ok": True, "running": bool(pids), "pids": pids,
+                                "message": "桌宠窗口正在打开" if pids else "正在启动，几秒后出现"})
+                elif action == "close":
+                    pw.stop()
+                    self._json({"ok": True, "running": False, "pids": [],
+                                "message": "桌宠窗口已关闭"})
+                else:
+                    pids = pw.running_pids()
+                    self._json({"ok": True, "running": bool(pids), "pids": pids})
             else:
                 self._json({"ok": False, "message": "未知接口"}, 404)
         except Exception as e:
@@ -1014,6 +1080,40 @@ def _pick_port(preferred: int) -> int:
             except OSError:
                 continue
     raise SystemExit(f"端口 {preferred}~{preferred + 19} 都被占用了")
+
+
+def service_alive(port: int = DEFAULT_PORT, timeout: float = 3.0) -> bool:
+    """探测仪表盘服务是否已经在跑。"""
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/api/data",
+                               timeout=timeout).read(64)
+        return True
+    except Exception:
+        return False
+
+
+def ensure_service(port: int = DEFAULT_PORT, *, wait_sec: float = 12.0) -> int:
+    """服务没在跑就起一个（脱离当前进程）。返回实际端口。
+
+    为什么桌宠需要它：桌宠窗口是个浏览器页面，得有个服务给它提供模型与
+    状态数据。用户可能只开了桌宠、没开仪表盘，所以这里要能把服务拉起来。
+    """
+    if service_alive(port):
+        return port
+    flags = 0x00000008 | 0x08000000        # DETACHED_PROCESS | CREATE_NO_WINDOW
+    subprocess.Popen(
+        [sys.executable, str(ROOT / "lib" / "server.py"),
+         "--no-open", "--port", str(port)],
+        cwd=str(ROOT), creationflags=flags,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        close_fds=True)
+    deadline = time.time() + wait_sec
+    while time.time() < deadline:
+        if service_alive(port):
+            return port
+        time.sleep(0.4)
+    return port
 
 
 def main(argv: list[str] | None = None) -> int:
