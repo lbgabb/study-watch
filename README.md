@@ -274,6 +274,24 @@ Neither is worth it. So the split is:
 - **Reminder popup** (tkinter): static cards — zero dependencies, instant, cheap
 - **Pet** (dashboard): real Live2D, because a browser is already running — **no extra process**
 
+### It is a standalone window (not just a card in the dashboard)
+
+The pet has two forms, and neither needs anything extra installed:
+
+| Form | How to open | What it is |
+| --- | --- | --- |
+| **Standalone window** | Double-click `pet.bat`, or press "open standalone pet" in the control panel | Chromeless, always-on-top, draggable; it stays with you. Closing it does not affect monitoring or stats |
+| Card inside the dashboard | Just open the dashboard | You see her while looking at your data |
+
+Both forms use **the same model and the same judgement rules**, so her expression is always
+consistent between them.
+
+> Why is the standalone window a browser one rather than a native window? In one line: **Live2D
+> needs WebGL, and tkinter has none.** The alternative — pre-rendering frames and playing them
+> back from Python — was fully measured at the time (including how to get a per-pixel transparent
+> window, plus all the performance numbers). The conclusion was "feasible but not worth it"; the
+> trade-off and the measurements are in [docs/pet-render-choice.md](docs/pet-render-choice.md).
+
 ### Artwork and licensing (important)
 
 The character artwork is **[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.en)

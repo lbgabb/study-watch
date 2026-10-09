@@ -10,7 +10,11 @@
   3. 连续 60 帧的实际帧间隔（含 sleep 到目标帧率）
 
 用法：python tools/probe_frame_playback.py
+
+决策记录：见 docs/pet-render-choice.md。这里验证的是「预渲染帧」方案的
+播放性能；当时评估后没采用 —— 桌宠最终用浏览器窗口。
 """
+
 import ctypes
 import ctypes.wintypes as wt
 import io

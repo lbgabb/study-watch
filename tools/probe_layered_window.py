@@ -13,7 +13,12 @@
   · 报出窗口句柄、尺寸，并截屏确认边缘是渐隐的（而不是硬边白块）
 
 用法：python tools/probe_layered_window.py
+
+决策记录：这条「预渲染帧 + Python 播放」的路当时评估后没有采用，
+桌宠最终用的是浏览器窗口，原因与实测数字见 docs/pet-render-choice.md。
+保留这个脚本是因为它验证过的能力——逐像素透明窗口——以后可能还用得上。
 """
+
 import ctypes
 import ctypes.wintypes as wt
 import sys
