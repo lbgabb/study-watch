@@ -18,6 +18,11 @@ It does not guess from window titles. **The screenshot is actually sent to the m
 - **Pomodoro / focus plan** (the centrepiece): four built-in rhythms (25/5, 90/20, 52/17, 15/3), automatic focus↔break switching, full customisation that **remembers your numbers**; breaks are excluded from the focus rate and never trigger a distraction popup
 - **Windows desktop tool**, Python 3.10+, single third-party dependency (Pillow)
 - **Not tied to any one vendor**: standard OpenAI-compatible protocol, so any vision-capable model works — including a local llama.cpp / LM Studio server
+- **The reminder is cute on purpose**: eight hand-drawn cards with per-situation expressions and copy
+  (it teases rather than scolds); praise is never muted, and the evidence always comes with it
+- **A Live2D desktop pet**: the whale girl's expression follows every verdict. She can live in a
+  **standalone always-on-top window** that stays with you (chromeless, draggable) and can start or
+  end your focus plan directly — or just be a card in the dashboard
 - **Per-application capture policy**: skip games entirely, check short-video sites on every window switch, chat every 10 minutes, reading every 5 — saves API calls and improves accuracy
 - **Local web dashboard**: zoomable timeline, date switching, and every setting editable in the browser — no hand-editing config files
 - Screenshots are **encoded in memory only** and sent straight to your API; nothing is written to disk by default
@@ -232,6 +237,21 @@ verdict**, so you can tell what the last check concluded at a glance:
 
 Click her and she reacts (bubble motion).
 
+### Three forms, use whichever fits
+
+| Form | How to open | What it is |
+| --- | --- | --- |
+| **Standalone window** | Double-click `pet.bat`, or press "open standalone pet" in the control panel | Chromeless, always-on-top, draggable; it stays with you. Closing it does not affect monitoring or stats |
+| Card inside the dashboard | Just open the dashboard | You see her while looking at your data |
+| Reminder popup | Appears automatically when you drift off | A tkinter static card: zero dependencies, instant |
+
+All three use **the same model and the same judgement rules**, so her expression is always
+consistent between them.
+
+The standalone window's size and position are adjustable
+(`pet.ps1 -Width 420 -Height 520 -X 100 -Y 80`); the default is 380x480. It **starts the service
+itself if needed**, so you can run only the pet and never open the dashboard.
+
 ### She is also where the plan and the reminders land
 
 She isn't just decoration: **the focus plan and the distraction reminders both surface here.**
@@ -242,9 +262,17 @@ She isn't just decoration: **the focus plan and the distraction reminders both s
 | **Distraction reminder** | At the same moment the popup appears, she switches expression and says the same thing: the bubble shows the text actually seen on screen, the label names the situation (`游戏 · 20:11`). Both use the same verdict, so they can never disagree |
 | **Phase change / plan complete** | A tea-sipping motion when a break starts, a celebration motion when the plan finishes |
 
-The focus-plan card in the control panel is **still there** — this is a second entry point to the
-same plan, not a replacement. Change the rhythm or inspect progress on the card; keep her company
-while you work in the pet.
+**The pet can drive the plan directly**, so you never have to open the dashboard:
+
+| Plan state | Buttons in the pet window |
+| --- | --- |
+| Not running | "Start focus" |
+| Focusing | "Break early", "End plan", plus a countdown on the right |
+| On a break | "End break, continue", "End plan" |
+
+The focus-plan card in the control panel **stays as it is** — a second entry point to the same plan,
+not a replacement. Change the rhythm or inspect full progress on the card; keep the countdown in
+view while you work via the pet.
 
 ### Toggle and tuning
 
@@ -322,26 +350,65 @@ editor change at completely different rates. Rules live in `capture.rules` in `c
 matched **in order; the first hit wins**:
 
 ```jsonc
-"capture": {
-  "enabled": true,
-  "min_gap_sec": 20,       // safety gate: at least this long between two checks
-  "rules": [
-    // Don't check this application at all (games, emulators)
-    { "name": "games", "process": ["steam", "mumup*", "pcl*", "minecraft*"],
-      "action": "skip" },
-
-    // Check the moment you switch to it (switch points are where drift happens)
-    { "name": "short video", "title_contains": ["TikTok", "Shorts", "Reels"],
-      "switch_check": true },
-
-    // Windows you sit in for a long time: one check on arrival, then every 10 minutes
-    { "name": "chat", "process": ["wechat*", "qq", "discord*", "telegram*"],
-      "polling_sec": 600 },
-
-    // Scrolling reading: check once N seconds have passed since the last verdict
-    { "name": "long reads", "process": ["sumatrapdf*", "winword*", "wps*"],
-      "tick_sec": 300 }
-  ]
+{
+  "interval_sec": 120,  // seconds between checks
+  "min_gap_sec": 30,
+  "max_width": 1600,  // screenshot scale width; smaller is cheaper
+  "jpeg_quality": 85,
+  "detail": "low",  // image detail: low is cheaper, high can read small text
+  "idle_skip_sec": 300,  // skip if there has been no input for this long
+  "capture": {  // see "Capture policy" above
+    "enabled": true,
+    "default_sec": null,
+    "min_gap_sec": 20,
+    "rules": []
+  },
+  "plan": {  // pomodoro defaults; remembered from the dashboard
+    "preset": "pomodoro",  // last rhythm used
+    "focus_min": 25,
+    "break_min": 5,
+    "long_every": 4,
+    "long_break_min": 20,
+    "rounds": 0,  // 0 = unlimited rounds
+    "remind_on_break": false,  // also remind during breaks (off by default)
+    "strict_break": false,  // count break time in stats (off by default)
+    "start_monitor": true  // also start monitoring when you press "start focus"
+  },
+  "api": {  // standard OpenAI-compatible protocol; any vision-capable model works
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",  // environment variable to read the key from
+    "credentials_file": "~/.study-watch/credentials.yaml",  // fallback yaml when the env var is missing
+    "temperature": 0,
+    "max_tokens": 900,
+    "timeout_sec": 90
+  },
+  "judge": {  // judging criteria
+    "goal": "学习（课程、教材、网课、题库、编程、外语、写作业与笔记）",
+    "strictness": "normal",  // loose / normal / strict
+    "extra_rules": [],  // extra rules, e.g. "reading papers counts as studying"
+    "alias_rules": []  // category aliases, e.g. pin an app to studying
+  },
+  "reminder": {  // how you get reminded
+    "enabled": true,
+    "backend": "auto",
+    "sound": true,
+    "mute_after_remind_sec": 300,  // quiet period after one reminder
+    "off_task_streak_required": 1,  // set to 2 to require two consecutive misses
+    "auto_close_sec": 60  // auto-close the popup (0 = never)
+  },
+  "privacy": {  // privacy switches
+    "save_shots": false,  // true writes screenshots to data/shots
+    "save_api_raw": true,  // keep raw model replies, useful for diagnosing misjudgements
+    "shots_dir": "data/shots"
+  },
+  "pet": {  // the Live2D pet (lives in the dashboard / standalone window)
+    "enabled": true,  // off + refresh means the 3.9MB model and renderer are never loaded
+    "max_fps": 20,  // frame cap; breathing and blinking look identical at 20fps
+    "show_plan": true,  // show the focus-plan countdown in the speech bubble
+    "speak": true,  // let her say the reminder in the bubble
+    "pause_when_hidden": true  // stop rendering while the tab is not visible
+  }
 }
 ```
 
@@ -497,31 +564,45 @@ Screenshot cost, measured on a 2880×1800 display: grab ~98ms + scale ~80ms + en
   "plan": {                   // pomodoro defaults, remembered from the dashboard
     "preset": "pomodoro", "focus_min": 25, "break_min": 5,
     "long_every": 4, "long_break_min": 20, "rounds": 0,
+    "remind_on_break": false, // also remind during breaks (off by default)
+    "strict_break": false,    // count break time in stats (off by default)
+    "start_monitor": true     // start monitoring when you press "start focus"
+}
+  "pet": {                    // the Live2D pet (lives in the dashboard / standalone window)
+    "enabled": true,          // off + refresh means the 3.9MB model and renderer are never loaded
+    "max_fps": 20,            // frame cap; breathing and blinking look identical at 20fps
+    "show_plan": true,        // show the focus-plan countdown in the speech bubble
+    "speak": true,            // let her say the reminder out loud (in the bubble)
+    "pause_when_hidden": true // stop rendering while the tab is not visible
+}
+  "plan": {                   // pomodoro defaults, remembered from the dashboard
+    "preset": "pomodoro", "focus_min": 25, "break_min": 5,
+    "long_every": 4, "long_break_min": 20, "rounds": 0,
     "remind_on_break": false, "strict_break": false
-  },
+}
   "api": {
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-flash",
     "api_key_env": "DEEPSEEK_API_KEY",       // environment variable to read the key from
     "credentials_file": "~/.study-watch/credentials.yaml"
                                              // fallback yaml, e.g. DEEPSEEK_API_KEY: sk-xxxx
-  },
+}
   "judge": {
     "goal": "Exam preparation (lecture videos, textbooks, online courses, problem sets, programming/language study, homework and notes)",
     "strictness": "normal",   // loose / normal / strict
     "extra_rules": [],
     "alias_rules": []
-  },
+}
   "reminder": {
     "enabled": true, "sound": true,
     "mute_after_remind_sec": 300,
     "off_task_streak_required": 1,   // set to 2 to require two consecutive misses
     "auto_close_sec": 60
-  },
+}
   "privacy": {
     "save_shots": false,      // true writes screenshots to data/shots
     "save_api_raw": true      // keep raw model replies, useful for diagnosing misjudgements
-  }
+}
 }
 ```
 
@@ -601,13 +682,14 @@ capture rules to exclude irrelevant applications.
 ## Tests
 
 ```powershell
-.\selftest.bat        # runs all 19 checks and prints a summary
+.\selftest.bat        # runs all 20 checks and prints a summary
 ```
 
 | Test | What it verifies |
 | --- | --- |
 | `tools/fix_script_encoding.py --check` | `.ps1` files have a UTF-8 BOM, `.cmd`/`.bat` files do not |
 | `tools/check_readme.py` | Both READMEs: `**bold**` markers balanced (they may span lines), consistent table columns, fenced blocks closed, every table-of-contents anchor resolves |
+| `tools/check_readme_config.py` | Whether the config example in both READMEs matches lib/config.py exactly (all 44 keys), and still parses as valid JSON once comments are stripped |
 | `tests/test_json_repair.py` | Malformed model JSON (unescaped quotes, missing/extra commas, prose around the object) can be repaired into something parseable |
 | `tests/test_provider_compat.py` | Provider compatibility: the degradation chain for standard / no-`detail` / no-JSON-mode providers; auth and 404 failures don't retry and produce actionable messages |
 | `tests/test_policy.py` | Capture policy: rule matching, the four skip/tick/polling/switch semantics, the safety gate, fallback when the policy is disabled |
@@ -653,6 +735,11 @@ python tests\test_plan_loop.py
 | `tools/make_github_upload.py` | Produce a folder that can be dragged straight into GitHub's web uploader |
 | `tools/make_readme_shots.py` | Take README screenshots automatically (start a real plan, capture the card and the full page) |
 | `tools/make_demo_data.py` | Generate **privacy-free** demo data for screenshots; `--clean` removes it |
+| `tools/check_pet_window.py` | Health-check the standalone pet window (via CDP — PrintWindow cannot see WebGL content) |
+| `tools/measure_live2d_cost.py` | Measure the pet's real CPU/memory cost (against a pet-disabled control) |
+| `tools/live2d_check.py` | Verify the committed model loads with motions and expressions registered |
+| `tools/build_live2d_model.py` | Generate a model3.json with motion/expression registrations from the raw package |
+| `tools/fetch_cubism_core.py` | Fetch the Live2D Cubism Core runtime (validates version and licence header) |
 | `tools/make_shortcut*.ps1` | Rebuild the desktop shortcuts |
 | `tools/fix_script_encoding.py` | Fix script encodings (see the development notes) |
 
@@ -682,16 +769,20 @@ study-watch/
 ├─ monitor.py               entry point (equivalent to python -m lib.monitor)
 ├─ config.json              configuration (also editable in the dashboard)
 ├─ setup.ps1                one-shot setup: env checks, shortcuts, smoke test
-├─ selftest.ps1 / .bat      one-shot test suite (19 checks)
+├─ selftest.ps1 / .bat      one-shot test suite (20 checks)
 ├─ study-watch.cmd          target of the "study watch" desktop shortcut (pure ASCII wrapper)
 ├─ dashboard.bat / .ps1     target of the "dashboard" desktop shortcut
 ├─ start.ps1 / .bat         run in console mode
 ├─ pomodoro.ps1             pomodoro CLI (presets / custom / status / stop)
+├─ pet.bat / pet.ps1        entry point for the standalone pet window
 ├─ start-25min.bat          double-click for one 25/5 round, then print the report
 ├─ report.bat / stop.bat    print the report / stop background monitoring
 ├─ requirements.txt         Pillow only
 ├─ LICENSE                  MIT
 ├─ assets/
+│  ├─ live2d/               Live2D model (moc3 + textures + 8 motions + 15 expressions) 3.9 MB
+│  ├─ vendor/               render runtime: Cubism Core (proprietary) / pixi / pixi-live2d-display
+│  ├─ reminder/             reminder cards (8 zh + 8 en) and circular avatars for the dashboard
 │  ├─ study-watch.ico       multi-size icon (16–256, BMP/DIB frames)
 │  ├─ icon-preview.png      size preview
 │  ├─ pomodoro-card.png     focus-plan card used in this README
@@ -708,12 +799,20 @@ study-watch/
 │  ├─ store.py / report.py  log I/O and daily aggregation
 │  ├─ state.py              cross-restart state (last verdict time / last foreground app)
 │  ├─ server.py             dashboard backend (stdlib HTTP + API + start/stop control)
+│  ├─ pet_window.py         standalone pet window (browser app mode + toggle + process control)
+│  ├─ pet_event.py          event mailbox the monitor writes for the pet (reminders/phase changes)
+│  ├─ avatars.py            which avatar a verdict gets (uses the previous one to detect "just came back")
+│  ├─ reminder_copy.py      reminder copy and artwork mapping (zh + en)
 │  ├─ icon.py               icon drawing and .ico generation
 │  └─ common.ps1            shared PowerShell helpers
 ├─ web/
 │  ├─ index.html            dashboard page (dark theme, no external dependencies)
-│  └─ app.js                front end: timeline / donut / bars / lists / control / settings
-├─ tests/                   19 self-tests
+│  ├─ app.js                dashboard front end: timeline / donut / bars / lists / control / settings
+│  ├─ pet.html              standalone pet window page (chromeless, character + controls only)
+│  └─ pet.js                pet front end: expressions / speech bubble / plan controls / interaction
+├─ docs/
+│  └─ pet-render-choice.md  why the pet is a browser window (incl. the pre-rendered-frames measurements)
+├─ tests/                   20 self-tests
 └─ tools/                   diagnostics and generators
 ```
 
@@ -841,7 +940,7 @@ useful. That one was hit four times in a single file.
 
 The code was written by the author pair-programming with AI assistants (Claude / DeepSeek Harness):
 requirements, trade-offs and acceptance were the author's call, while much of the implementation,
-debugging and testing leaned on AI. The test suite (19 checks, including driving the dashboard
+debugging and testing leaned on AI. The test suite (20 checks, including driving the dashboard
 through a headless browser) is the main reason that workflow holds up — it has blocked a good number
 of changes that looked right and weren't.
 

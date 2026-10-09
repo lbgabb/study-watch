@@ -21,6 +21,10 @@
   自动切换专注与休息、支持自定义且**记得住你的数值**；休息时段不计入专注率、也不弹分心提醒
 - **Windows 桌面工具**，Python 3.10+，唯一第三方依赖是 Pillow
 - **不绑定 DeepSeek**：走标准 OpenAI 兼容协议，任何支持图片输入的模型都能用（含本地 llama.cpp / LM Studio）
+- **提醒是萌萌的**：八张手绘卡片按场景换表情与台词（吐槽而不是指责），
+  夸奖类不受静音影响，判断依据始终跟着一起显示
+- **Live2D 桌宠**：鲸鱼娘的表情跟着判定走；可以作为**独立小窗一直陪着**（无边框、置顶、可拖动），
+  能直接开始/结束专注计划，也能只当仪表盘里的卡片
 - **按前台应用分配截图**：游戏不判定、短视频一切换就查、聊天每 10 分钟、阅读每 5 分钟……省调用也提准确率
 - **本地网页仪表盘**：时间轴可缩放与切换日期，启停与全部设置都在网页里改，不用手编配置文件
 - 截图默认**只在内存里**编码后发 API，不落盘
@@ -224,6 +228,19 @@ powershell -File .\pomodoro.ps1 -Stop
 
 点它一下会有反应（吹泡泡动作）。
 
+### 三种形态，按场合用
+
+| 形态 | 打开方式 | 特点 |
+| --- | --- | --- |
+| **独立窗口** | 双击 `pet.bat`，或控制面板点「打开独立桌宠」 | 无边框、置顶、可拖动，一直陪着你；关掉它不影响监督与统计 |
+| 仪表盘里的卡片 | 打开仪表盘就能看到 | 看数据时顺带看到它 |
+| 提醒弹窗 | 分心时自动弹出 | tkinter 静态卡片，零依赖、秒开 |
+
+三种形态用的是**同一个模型、同一套判断规则**，所以表情始终一致。
+
+独立窗口可以调尺寸与位置（`pet.ps1 -Width 420 -Height 520 -X 100 -Y 80`），
+默认 380x480。它**自己会保证服务在跑**，所以只开桌宠不开仪表盘也能用。
+
 ### 它也是计划与提醒的落点
 
 桌宠不只是装饰，**专注计划和分心提醒都会走到它这里**：
@@ -234,8 +251,16 @@ powershell -File .\pomodoro.ps1 -Stop
 | **分心提醒** | 提醒窗弹出的**同时**，它换表情并说出同一件事：气泡显示屏幕上看到的原文，标签显示场景（游戏 · 20:11）。两者共用同一套判断，不会一个说游戏一个说娱乐 |
 | **阶段切换 / 计划完成** | 进入休息播端茶动作，完成播庆祝动作 |
 
-控制面板里的**番茄钟卡片照旧**——这里是同一份计划的另一个入口，不是把它搬走：
-想改节奏、看进度点番茄钟卡片，想让它陪着你学习就看桌宠。
+**桌宠这边也能直接操作计划**，不必再开仪表盘：
+
+| 计划状态 | 桌宠窗口里的按钮 |
+| --- | --- |
+| 未在跑 | 「开始专注」 |
+| 专注中 | 「提前休息」「结束计划」+ 右侧倒计时 |
+| 休息中 | 「结束休息，继续」「结束计划」 |
+
+控制面板里的**番茄钟卡片也照旧保留**——同一份计划的另一个入口，不是把它搬走：
+想改节奏、看完整进度用卡片，想一边学一边看倒计时就用桌宠。
 
 ### 开关与调参
 
@@ -306,26 +331,65 @@ pixi 与 pixi-live2d-display 是 MIT。
 同一套间隔用在所有程序上是浪费——看视频、聊天、写代码的"变化速度"完全不同。规则写在 `config.json` 的 `capture.rules`，**按书写顺序，第一条命中者生效**：
 
 ```jsonc
-"capture": {
-  "enabled": true,
-  "min_gap_sec": 20,       // 兜底闸门：两次判定至少隔这么久（防止重启后连打）
-  "rules": [
-    // 这个应用干脆不判定（游戏、模拟器）
-    { "name": "游戏与模拟器", "process": ["steam", "mumup*", "pcl*", "minecraft*"],
-      "action": "skip" },
-
-    // 一切换到它就立刻查（切换点最容易漏判）
-    { "name": "短视频", "title_contains": ["抖音", "快手", "小红书"],
-      "switch_check": true },
-
-    // 长时间停在一个窗口的：切过来先看一眼，之后每 10 分钟一次
-    { "name": "即时通讯", "process": ["wechat*", "qq", "tim*", "discord*"],
-      "polling_sec": 600 },
-
-    // 滚动阅读的：距上次判定满 N 秒才查
-    { "name": "长文阅读", "process": ["sumatrapdf*", "winword*", "wps*"],
-      "tick_sec": 300 }
-  ]
+{
+  "interval_sec": 120,  // 判定间隔（秒）
+  "min_gap_sec": 30,
+  "max_width": 1600,  // 截图缩放宽度，越小越省
+  "jpeg_quality": 85,
+  "detail": "low",  // 图片精度：low 更省，high 能看清小字
+  "idle_skip_sec": 300,  // 超过这么久没键鼠输入就跳过
+  "capture": {  // 见上文「截图策略」
+    "enabled": true,
+    "default_sec": null,
+    "min_gap_sec": 20,
+    "rules": []
+  },
+  "plan": {  // 番茄钟默认值；在仪表盘里调过就记在这里
+    "preset": "pomodoro",  // 上次用的节奏
+    "focus_min": 25,
+    "break_min": 5,
+    "long_every": 4,
+    "long_break_min": 20,
+    "rounds": 0,  // 0 = 不限轮数
+    "remind_on_break": false,  // 休息时是否也提醒分心（默认关）
+    "strict_break": false,  // 休息是否计入统计（默认关）
+    "start_monitor": true  // 点「开始专注」时是否连带启动监督
+  },
+  "api": {  // 走标准 OpenAI 兼容协议，任何支持图片输入的模型都行
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",  // 去这个环境变量里找 key
+    "credentials_file": "~/.study-watch/credentials.yaml",  // 没有环境变量时，从这个 yaml 里读
+    "temperature": 0,
+    "max_tokens": 900,
+    "timeout_sec": 90
+  },
+  "judge": {  // 判定标准
+    "goal": "学习（课程、教材、网课、题库、编程、外语、写作业与笔记）",
+    "strictness": "normal",  // loose 宽松 / normal / strict 严格
+    "extra_rules": [],  // 额外规则，例如「看论文算学习」
+    "alias_rules": []  // 归类约定，例如把某程序固定算作学习
+  },
+  "reminder": {  // 提醒方式
+    "enabled": true,
+    "backend": "auto",
+    "sound": true,
+    "mute_after_remind_sec": 300,  // 提醒一次后安静多久
+    "off_task_streak_required": 1,  // 改成 2 就是「连续 2 次分心才提醒」
+    "auto_close_sec": 60  // 提醒窗自动关闭（0 = 不自动关）
+  },
+  "privacy": {  // 隐私开关
+    "save_shots": false,  // true 会把截图存到 data/shots
+    "save_api_raw": true,  // 存模型原始回复，方便排查误判
+    "shots_dir": "data/shots"
+  },
+  "pet": {  // Live2D 桌宠（住在仪表盘 / 独立窗口里）
+    "enabled": true,  // 关掉后刷新页面即不再加载 3.9MB 模型与渲染库
+    "max_fps": 20,  // 帧率上限；呼吸眨眼在 20fps 下看不出差别
+    "show_plan": true,  // 气泡里是否显示专注计划倒计时
+    "speak": true,  // 是否把提醒内容说进气泡
+    "pause_when_hidden": true  // 标签页不可见时停掉渲染
+  }
 }
 ```
 
@@ -464,6 +528,20 @@ pixi 与 pixi-live2d-display 是 MIT。
   "max_width": 1600,          // 截图缩放宽度，越小越省
   "detail": "low",            // 图片精度：low 更省，high 能看清小字
   "capture": { /* 见上文"截图策略" */ },
+  "plan": {                   // 番茄钟默认值，在仪表盘里调过就记在这里
+    "preset": "pomodoro", "focus_min": 25, "break_min": 5,
+    "long_every": 4, "long_break_min": 20, "rounds": 0,
+    "remind_on_break": false, // 休息时是否也提醒分心（默认关）
+    "strict_break": false,    // 休息是否计入统计（默认关）
+    "start_monitor": true     // 点「开始专注」时是否连带启动监督
+}
+  "pet": {                    // Live2D 桌宠（住在仪表盘 / 独立窗口里）
+    "enabled": true,          // 关掉后刷新页面即不再加载 3.9MB 模型与渲染库
+    "max_fps": 20,            // 帧率上限；呼吸眨眼在 20fps 下看不出差别
+    "show_plan": true,        // 气泡里是否显示专注计划倒计时
+    "speak": true,            // 是否把提醒内容说出来
+    "pause_when_hidden": true // 标签页不可见时停掉渲染
+}
   "api": {
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-flash",
@@ -471,23 +549,23 @@ pixi 与 pixi-live2d-display 是 MIT。
     "credentials_file": "~/.study-watch/credentials.yaml"
                                              // 没有环境变量时，从这个 yaml 里读
                                              // 形如：DEEPSEEK_API_KEY: sk-xxxx
-  },
+}
   "judge": {
     "goal": "备考学习（课程视频、教材、网课、题库、编程/外语学习、写作业与笔记）",
     "strictness": "normal",   // loose 宽松 / normal / strict 严格
     "extra_rules": [],
     "alias_rules": []
-  },
+}
   "reminder": {
     "enabled": true, "sound": true,
     "mute_after_remind_sec": 300,
     "off_task_streak_required": 1,   // 改成 2 就是"连续 2 次分心才提醒"
     "auto_close_sec": 60
-  },
+}
   "privacy": {
     "save_shots": false,      // true 会把截图存到 data/shots
     "save_api_raw": true      // 存模型原始回复，方便排查误判
-  }
+}
 }
 ```
 
@@ -551,7 +629,7 @@ python monitor.py --check-api
 ## 自测
 
 ```powershell
-.\selftest.bat        # 一键跑全部 19 项，最后给出汇总
+.\selftest.bat        # 一键跑全部 20 项，最后给出汇总
 ```
 
 | 测试 | 验证什么 |
@@ -600,9 +678,15 @@ python tests\test_plan_loop.py
 | `tools/make_github_upload.py` | 生成可直接拖到 GitHub 网页上传的目录 |
 | `tools/make_readme_shots.py` | 自动给 README 拍配图（起一个真实计划 + 截卡片与整页） |
 | `tools/make_demo_data.py` | 生成**零隐私**的演示数据（截图用），`--clean` 一键清掉 |
+| `tools/check_pet_window.py` | 体检独立桌宠窗口（走 CDP，不是 PrintWindow —— 后者抓不到 WebGL 内容） |
+| `tools/measure_live2d_cost.py` | 实测桌宠的 CPU/内存开销（与"停用桌宠"对照） |
+| `tools/live2d_check.py` | 验证入库后的模型可加载、动作与表情都已注册 |
+| `tools/build_live2d_model.py` | 从原始模型包生成带动作/表情注册的 model3.json |
+| `tools/fetch_cubism_core.py` | 取回 Live2D Cubism Core 运行时（校验版本与许可头） |
 | `tools/make_shortcut*.ps1` | 重建桌面快捷方式 |
 | `tools/fix_script_encoding.py` | 修正脚本编码（见下方开发笔记） |
 | 	ools/check_readme.py | 中英两版 README：加粗标记成对（允许跨行）、表格列数一致、代码块闭合、目录锚点全部可跳转 |
+| `tools/check_readme_config.py` | README 里的配置示例是否与 lib/config.py 的默认值完全一致（44 个键），以及去掉注释后是不是合法 JSON |
 
 ---
 
@@ -626,16 +710,20 @@ study-watch/
 ├─ monitor.py               入口（等价 python -m lib.monitor）
 ├─ config.json              配置（也可在仪表盘里改）
 ├─ setup.ps1                一键部署：查环境、建快捷方式、冒烟测试
-├─ selftest.ps1 / .bat      一键自测（19 项）
+├─ selftest.ps1 / .bat      一键自测（20 项）
 ├─ study-watch.cmd          桌面「学习监督」快捷方式的目标（纯 ASCII 外壳）
 ├─ dashboard.bat / .ps1     桌面「学习监督 仪表盘」快捷方式的目标
 ├─ start.ps1 / .bat         控制台模式运行
 ├─ pomodoro.ps1             番茄钟命令行入口（预设/自定义/状态/停止）
+├─ pet.bat / pet.ps1        独立桌宠窗口的入口（双击即开）
 ├─ start-25min.bat          双击开一轮 25/5，结束后自动出日报
 ├─ report.bat / stop.bat    看日报 / 结束后台监督
 ├─ requirements.txt         只有 Pillow
 ├─ LICENSE                  MIT
 ├─ assets/
+│  ├─ live2d/               Live2D 模型（moc3 + 贴图 + 8 动作 + 15 表情）3.9 MB
+│  ├─ vendor/               渲染运行时：Cubism Core（专有）/ pixi / pixi-live2d-display
+│  ├─ reminder/             提醒卡片（中英各 8 张）+ 仪表盘用的圆形头像
 │  ├─ study-watch.ico       多尺寸图标（16~256，BMP/DIB 帧）
 │  ├─ icon-preview.png      各尺寸预览
 │  └─ dashboard-preview.png README 用的界面截图
@@ -651,12 +739,20 @@ study-watch/
 │  ├─ store.py / report.py  日志读写与日报聚合
 │  ├─ state.py              跨重启状态（上次判定时间 / 上次前台应用）
 │  ├─ server.py             仪表盘后端（纯标准库 HTTP + API + 启停控制）
+│  ├─ pet_window.py        独立桌宠窗口（浏览器 app 模式 + 开关 + 进程管理）
+│  ├─ pet_event.py         监控进程写给桌宠的事件信箱（提醒 / 阶段切换）
+│  ├─ avatars.py           每条判定该显示哪个头像（按前一条判断是否刚回来）
+│  ├─ reminder_copy.py     提醒文案与配图映射（中英双语）
 │  ├─ icon.py               图标绘制与 .ico 生成
 │  └─ common.ps1            PowerShell 侧公共函数
 ├─ web/
 │  ├─ index.html            仪表盘页面（深色主题，无外部依赖）
-│  └─ app.js                前端：时间轴 / 环形图 / 柱状图 / 明细 / 控制 / 设置
-├─ tests/                   19 项自测
+│  ├─ app.js                仪表盘前端：时间轴 / 环形图 / 柱状图 / 明细 / 控制 / 设置
+│  ├─ pet.html              独立桌宠窗口的页面（无边框、只有角色与控制条）
+│  └─ pet.js                桌宠前端：表情切换 / 气泡 / 计划控制条 / 互动
+├─ docs/
+│  └─ pet-render-choice.md  为什么桌宠用浏览器窗口（含"预渲染帧"方案的实测与取舍）
+├─ tests/                   20 项自测
 └─ tools/                   排障与生成工具
 ```
 
@@ -764,7 +860,7 @@ python tools\make_demo_data.py --clean           # 清掉演示记录
 ## 这个项目是怎么写出来的
 
 代码由作者与 AI 编程助手（Claude / DeepSeek Harness）结对完成：需求、取舍、验收由作者把关，
-具体实现、调试与测试大量借助 AI 完成。测试套件（19 项，含无头浏览器实测仪表盘交互）
+具体实现、调试与测试大量借助 AI 完成。测试套件（20 项，含无头浏览器实测仪表盘交互）
 是这套流程能站得住脚的主要原因——它挡下过不少"看起来对、实际有问题"的改动。
 
 细节与踩坑记录见上面的[开发笔记](#开发笔记)。

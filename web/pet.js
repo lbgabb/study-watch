@@ -9,6 +9,25 @@
 //   · 悬停：表情变柔和（回正）
 //   · 顶栏按钮：静音 / 收起 / 关闭
 
+// 把未捕获的错误显示在气泡里。
+// 为什么需要：boot() 是 async 的，抛出的异常只会进控制台 ——
+// 而这是个无边框小窗，用户看不到控制台，界面就永远停在
+// "正在把鲸鱼娘请出来…"（实测为排查这个花了不少时间才发现是启动静默失败）。
+// 顺手存到 window.__petErr，测试脚本可以直接读。
+window.__petErr = null;
+function petFail(where, e) {
+  const msg = (e && (e.stack || e.message)) || String(e);
+  window.__petErr = where + ': ' + msg;
+  const el = document.getElementById('say');
+  if (el) el.textContent = '桌宠启动出错（' + where + '）：' + msg.slice(0, 160);
+  const tag = document.getElementById('petTag');
+  if (tag) tag.textContent = '出错';
+  try { console.error('[pet]', where, e); } catch (_) {}
+}
+window.addEventListener('error', ev => petFail('window', ev.error || ev.message));
+window.addEventListener('unhandledrejection',
+  ev => petFail('promise', ev.reason || 'unknown rejection'));
+
 const PET_EXPR = {
   onTask: 'star', comeback: 'sweat', offGeneral: 'tease', offShort: 'tongue',
   offGame: 'angry', offSocial: 'tease', idle: 'blank', sleepy: 'sleepy',
@@ -143,9 +162,18 @@ async function boot() {
   }
 
   const canvas = $('pet');
-  // 等一帧再量：boot() 是脚本一加载就调的，那时 flex 布局可能还没完成，
-  // 量到的父容器尺寸是过期的，模型会画偏或被裁掉（实测踩过）。
-  await new Promise(r => requestAnimationFrame(() => r()));
+  // 等布局稳定再量尺寸（boot 是脚本一加载就调的，那一刻 flex 可能还没算完，
+  // 量到过期值会让模型画偏）。
+  //
+  // **但不能只用 requestAnimationFrame**：这个窗口是 app 模式启动的，
+  // 初始 document.hidden 为 true，rAF 一次都不会触发 —— 实测 boot() 会
+  // 永远卡在那一行，界面停在"正在把鲸鱼娘请出来…"，而且因为不是抛异常，
+  // 连 unhandledrejection 都抓不到（排查了很久）。
+  // 所以 rAF 与定时器赛跑，谁先到用谁。
+  await Promise.race([
+    new Promise(r => requestAnimationFrame(() => r('raf'))),
+    new Promise(r => setTimeout(() => r('timeout'), 120)),
+  ]);
   const box = canvas.parentElement.getBoundingClientRect();
   const W = Math.max(160, Math.round(box.width));
   const H = Math.max(160, Math.round(box.height));
