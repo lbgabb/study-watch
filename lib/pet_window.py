@@ -211,7 +211,21 @@ def start(*, port: int = 0, style: str = "", colorkey: str = "",
              f"--window-size={px_w},{px_h}",
              "--no-first-run", "--no-default-browser-check",
              f"--user-data-dir={prof}",
-             "--disable-features=Translate,msEdgeSplitScreen"]
+             # 关掉 Chromium 的"窗口被遮挡/后台"节流。
+             #
+             # 为什么必须加（实测）：不加这些开关时，这个无边框窗口会被判定为
+             # "被遮挡"，于是 document.hidden === true、visibilityState === "hidden"，
+             # 而 Chromium 对隐藏页面会把 setInterval 节流到 1Hz、**完全停用
+             # requestAnimationFrame**。后果是 PIXI 的 ticker 虽然 started=true、
+             # FPS 也有数字，却一帧都不推进 —— 桌宠完全静止，动作点了不播、
+             # 表情切了看不出差别。
+             #
+             # 实测数据：不加开关时 100ms 定时器 1.3 秒只触发 2 次、document.hidden=True；
+             # 加上之后触发 13 次、document.hidden=False。
+             "--disable-backgrounding-occluded-windows",
+             "--disable-renderer-backgrounding",
+             "--disable-background-timer-throttling",
+             "--disable-features=Translate,msEdgeSplitScreen,CalculateNativeWinOcclusion"]
     if x or y:
         flags.append(f"--window-position={round(x * scale)},{round(y * scale)}")
     p = subprocess.Popen([edge, *flags],

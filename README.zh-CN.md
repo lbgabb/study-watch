@@ -629,7 +629,7 @@ python monitor.py --check-api
 ## 自测
 
 ```powershell
-.\selftest.bat        # 一键跑全部 20 项，最后给出汇总
+.\selftest.bat        # 一键跑全部 21 项，最后给出汇总
 ```
 
 | 测试 | 验证什么 |
@@ -710,7 +710,7 @@ study-watch/
 ├─ monitor.py               入口（等价 python -m lib.monitor）
 ├─ config.json              配置（也可在仪表盘里改）
 ├─ setup.ps1                一键部署：查环境、建快捷方式、冒烟测试
-├─ selftest.ps1 / .bat      一键自测（20 项）
+├─ selftest.ps1 / .bat      一键自测（21 项）
 ├─ study-watch.cmd          桌面「学习监督」快捷方式的目标（纯 ASCII 外壳）
 ├─ dashboard.bat / .ps1     桌面「学习监督 仪表盘」快捷方式的目标
 ├─ start.ps1 / .bat         控制台模式运行
@@ -752,7 +752,7 @@ study-watch/
 │  └─ pet.js                桌宠前端：表情切换 / 气泡 / 计划控制条 / 互动
 ├─ docs/
 │  └─ pet-render-choice.md  为什么桌宠用浏览器窗口（含"预渲染帧"方案的实测与取舍）
-├─ tests/                   20 项自测
+├─ tests/                   21 项自测
 └─ tools/                   排障与生成工具
 ```
 
@@ -874,7 +874,54 @@ A 被算成"到 C 的间隔"，统计合计比时间轴多出约 1100s，图表�
 另外：合成测试数据必须让 `ts` 与 `sec` 自洽，且单条不超过 `MAX_SLOT_SEC`（900s），
 否则同一个断言会因为走哪条路径而给出不同结果。
 
-### 桌宠窗口：几个只会在真实窗口里出现的坑
+### 桌宠动画曾经完全静止（渲染循环不能靠 rAF）
+
+用户反馈"动作切换不是立即生效"。查下来不是"不立即"，而是**根本没动过**：
+画面完全静止，动作点了不播、表情切了看不出差别。原因有三层，缺一不可：
+
+**1. Chromium 把无边框 app 窗口判定为"被遮挡"**，于是
+`document.hidden === true`、`setInterval` 被节流到 1Hz、`requestAnimationFrame`
+完全停用。修法是在启动参数里加反节流开关
+（`--disable-backgrounding-occluded-windows` 等）。实测：不加时 100ms 定时器
+1.3 秒只触发 2 次、`document.hidden=True`；加了之后触发 13 次、`hidden=False`。
+
+**2. 但 rAF 仍然只触发一次**——窗口虽然在屏幕上，Chromium 并不把它当作需要
+持续合成的可见窗口。而 PIXI 的 `Ticker` 完全依赖 rAF，于是
+`ticker.started === true`、FPS 也有数字，**却一帧都不推进**。
+所以渲染循环不能靠 ticker / rAF，必须自己用定时器驱动。
+
+**3. `model.update(dt)` 不驱动动作。** 从 vendor 源码读到的真实签名：
+
+```js
+Live2DModel.update(t) { this.deltaTime += t; this.elapsedTime += t; }   // 只累加时间
+internalModel.update(t, e) {
+  t /= 1e3; e /= 1e3;
+  motionManager.update(coreModel, e);      // 动作推进靠第二个参数（秒）
+  expressionManager.update(coreModel, e);
+  eyeBlink.updateParameters(coreModel, t);
+  updateNaturalMovements(1e3 * t, 1e3 * e);
+  physics.evaluate(coreModel, t);
+}
+```
+
+每帧要做三件事：`model.update(dt)`、`model.internalModel.update(dt, now)`、
+`app.render()`。
+
+### 验证动画时别信 canvas.toDataURL()
+
+上面第 2、3 条其实早就修好了，但**我一度以为画面仍然静止**，因为用
+`canvas.toDataURL()` 做画面指纹时，连续采样拿到的内容完全一样。
+WebGL 在未开 `preserveDrawingBuffer` 时，绘制缓冲的读回语义不可靠 ——
+**是量具在骗人，不是画面没动。**
+
+换成 CDP 的 `Page.captureScreenshot` 对比像素后立刻看清：待机时就有
+**6%~11% 的像素在变**（呼吸、眨眼）。窗口截图走合成器，等同肉眼所见，
+是唯一可信的判据（`tests/test_pet_animation.py` 用的就是这条路）。
+
+另外判"动作有没有播"要听 `motionStart` 事件，不要事后去读
+`state.currentGroup`：短动作一两秒就播完了，读到 `None` 并不代表没播。
+
+### 桌宠窗口：几个只会在真实窗口里出现的坑### 桌宠窗口：几个只会在真实窗口里出现的坑
 
 **1. `requestAnimationFrame` 在 app 模式窗口里不触发。**
 无头浏览器里一切正常，但在 `--app=` 起的窗口里，启动瞬间 `document.hidden`
@@ -924,7 +971,7 @@ A 被算成"到 C 的间隔"，统计合计比时间轴多出约 1100s，图表�
 ## 这个项目是怎么写出来的
 
 代码由作者与 AI 编程助手（Claude / DeepSeek Harness）结对完成：需求、取舍、验收由作者把关，
-具体实现、调试与测试大量借助 AI 完成。测试套件（20 项，含无头浏览器实测仪表盘交互）
+具体实现、调试与测试大量借助 AI 完成。测试套件（21 项，含无头浏览器实测仪表盘交互）
 是这套流程能站得住脚的主要原因——它挡下过不少"看起来对、实际有问题"的改动。
 
 细节与踩坑记录见上面的[开发笔记](#开发笔记)。

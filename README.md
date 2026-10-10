@@ -682,7 +682,7 @@ capture rules to exclude irrelevant applications.
 ## Tests
 
 ```powershell
-.\selftest.bat        # runs all 20 checks and prints a summary
+.\selftest.bat        # runs all 21 checks and prints a summary
 ```
 
 | Test | What it verifies |
@@ -769,7 +769,7 @@ study-watch/
 ├─ monitor.py               entry point (equivalent to python -m lib.monitor)
 ├─ config.json              configuration (also editable in the dashboard)
 ├─ setup.ps1                one-shot setup: env checks, shortcuts, smoke test
-├─ selftest.ps1 / .bat      one-shot test suite (20 checks)
+├─ selftest.ps1 / .bat      one-shot test suite (21 checks)
 ├─ study-watch.cmd          target of the "study watch" desktop shortcut (pure ASCII wrapper)
 ├─ dashboard.bat / .ps1     target of the "dashboard" desktop shortcut
 ├─ start.ps1 / .bat         run in console mode
@@ -812,7 +812,7 @@ study-watch/
 │  └─ pet.js                pet front end: expressions / speech bubble / plan controls / interaction
 ├─ docs/
 │  └─ pet-render-choice.md  why the pet is a browser window (incl. the pre-rendered-frames measurements)
-├─ tests/                   20 self-tests
+├─ tests/                   21 self-tests
 └─ tools/                   diagnostics and generators
 ```
 
@@ -954,7 +954,58 @@ The invariant (guarded by `tests/test_server.py`): **timeline total = on-task + 
 One more: synthetic test data must keep `ts` and `sec` consistent and stay under
 `MAX_SLOT_SEC` (900s), otherwise the same assertion passes or fails depending on which path runs.
 
-### Pet window: traps that only show up in a real window
+### The pet animation was completely frozen (never drive rendering with rAF)
+
+A user reported that "motion switching is not immediate". It turned out not to be a delay at all:
+nothing had ever animated. The picture was completely static — motions did not play and expressions
+made no visible difference. Three causes, all of which had to be fixed:
+
+**1. Chromium classifies the chromeless app window as occluded**, so `document.hidden === true`,
+`setInterval` is throttled to 1Hz, and `requestAnimationFrame` stops entirely. The fix is to pass
+anti-throttling flags (`--disable-backgrounding-occluded-windows` and friends). Measured: without
+them a 100ms timer fired twice in 1.3s with `document.hidden=True`; with them it fired 13 times and
+`hidden=False`.
+
+**2. rAF still fires only once.** The window is on screen, but Chromium does not treat it as a
+visible window that needs continuous compositing. PIXI's `Ticker` depends entirely on rAF, so
+`ticker.started === true` and an FPS number were both present while **not a single frame advanced**.
+The render loop therefore cannot rely on the ticker; it has to be driven by a timer.
+
+**3. `model.update(dt)` does not advance motion.** The real signatures, read out of the vendor
+bundle:
+
+```js
+Live2DModel.update(t) { this.deltaTime += t; this.elapsedTime += t; }   // time accounting only
+internalModel.update(t, e) {
+  t /= 1e3; e /= 1e3;
+  motionManager.update(coreModel, e);      // motion advances via the *second* argument (seconds)
+  expressionManager.update(coreModel, e);
+  eyeBlink.updateParameters(coreModel, t);
+  updateNaturalMovements(1e3 * t, 1e3 * e);
+  physics.evaluate(coreModel, t);
+}
+```
+
+Each frame must do three things: `model.update(dt)`, `model.internalModel.update(dt, now)`,
+`app.render()`.
+
+### Do not trust canvas.toDataURL() when verifying animation
+
+Items 2 and 3 above had actually been fixed, yet **I still believed the picture was frozen**,
+because sampling a fingerprint from `canvas.toDataURL()` returned identical content every time.
+Without `preserveDrawingBuffer`, WebGL readback semantics are unreliable — **the instrument was
+lying, not the picture.**
+
+Switching to CDP's `Page.captureScreenshot` and comparing pixels made it obvious immediately: even
+at idle, **6–11% of pixels change** (breathing, blinking). Window screenshots go through the
+compositor and match what the eye sees, which makes them the only trustworthy judge
+(`tests/test_pet_animation.py` uses exactly that).
+
+To decide whether a motion played, listen for the `motionStart` event rather than reading
+`state.currentGroup` afterwards: short motions finish in a second or two, and reading `None` does
+not mean it never played.
+
+### Pet window: traps that only show up in a real window### Pet window: traps that only show up in a real window
 
 **1. `requestAnimationFrame` never fires in an app-mode window.**
 Everything works under headless, but in a window started with `--app=` the page begins
@@ -1009,7 +1060,7 @@ The lesson: when a check fails, suspect the check before the code.
 
 The code was written by the author pair-programming with AI assistants (Claude / DeepSeek Harness):
 requirements, trade-offs and acceptance were the author's call, while much of the implementation,
-debugging and testing leaned on AI. The test suite (20 checks, including driving the dashboard
+debugging and testing leaned on AI. The test suite (21 checks, including driving the dashboard
 through a headless browser) is the main reason that workflow holds up — it has blocked a good number
 of changes that looked right and weren't.
 

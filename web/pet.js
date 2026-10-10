@@ -378,7 +378,16 @@ async function boot() {
   say(PET_TEXT.star, 4000);
   motion('idle');
 
-  if (cfg.pause_when_hidden) {
+  // 标签页不可见时停掉渲染 —— 但**在 app 模式的独立窗口里绝不能这么做**。
+  //
+  // 实测：`--app=` 起的窗口启动时 document.hidden 就是 true，之后也不会再有
+  // visibilitychange（不会出现"窗口变成可见"这种事件）。于是这里在启动时
+  // 立刻 PIXI.Ticker.shared.stop()，**整个模型被冻住** —— 画面完全静止
+  // （连续采样指纹完全相同），动作点了不播、表情切了看不出差别。
+  // 用户反馈的"动作切换不是立即生效"就是这个：其实是从没生效过。
+  //
+  // 独立窗口只有一个页面，没有"后台标签页"要省，这个优化对它只有害处。
+  if (cfg.pause_when_hidden && !window.__PET_STANDALONE__) {
     document.addEventListener('visibilitychange', () => {
       try {
         if (document.hidden) PIXI.Ticker.shared.stop();
@@ -386,6 +395,62 @@ async function boot() {
       } catch (e) { /* 忽略 */ }
     });
   }
+  // ---------- 渲染循环：定时器 + 显式 update/render ----------
+  //
+  // 为什么不用 PIXI 的 ticker / requestAnimationFrame（一路量出来的，别改回去）：
+  //   · 这个 app 模式窗口里 **rAF 几乎不触发**（实测 0.6 秒只触发 1 次），
+  //     而 PIXI 的 Ticker 完全依赖 rAF —— 于是 ticker.started=true、
+  //     count 却一直是 1，模型一帧都不动，画面完全静止。
+  //   · 改成"停掉 autoStart，定时器里调 ticker.update(now)"也不可靠：
+  //     定时器确实跑了 255 次、不抛任何异常、app.ticker.count 依然不动。
+  //
+  // 而**显式**调用是确定有效的（实测 model.update(50) x40 后 app.render()
+  // 画面指纹就变了）。所以每帧就做这两件事，行为完全可预测。
+  const targetFps = Math.max(1, Number(cfg.max_fps) || 20);
+  for (const tk of [PIXI.Ticker.shared, PIXI.Ticker.system]) {
+    try { tk.autoStart = false; tk.stop(); } catch (e) { /* 忽略 */ }
+  }
+  try { app.ticker.autoStart = false; app.ticker.stop(); } catch (e) { /* 忽略 */ }
+  try { model.autoUpdate = false; } catch (e) { /* 忽略 */ }
+
+  const frameMs = Math.max(1, Math.round(1000 / targetFps));
+  let lastFrame = performance.now();
+  window.__petLoopErr = null;
+  window.__petFrames = 0;
+  window.__petDriver = setInterval(() => {
+    const now = performance.now();
+    let dt = now - lastFrame;
+    lastFrame = now;
+    // 掉帧时不要一次补太多时间，否则动作会跳帧
+    if (dt > 250) dt = 250;
+    window.__petFrames++;
+    try {
+      // 顺序与参数都不能省（签名见文件顶部注释）：
+      //   model.update 只累加 PIXI 侧时间，不驱动动作；
+      //   动作/表情/眨眼/物理都在 internalModel.update(dt, now) 里推进，
+      //   而且它要两个参数 —— 第二个会被 /1000 当成秒传给 motionManager。
+      model.update(dt);
+      model.internalModel.update(dt, now);
+    } catch (e) {
+      window.__petLoopErr = 'update: ' + ((e && e.message) || String(e));
+    }
+    try {
+      app.render();
+    } catch (e) {
+      window.__petLoopErr = 'app.render: ' + ((e && e.message) || String(e));
+    }
+  }, frameMs);
+  window.__petDriverFps = targetFps;
+
+  // 自检：tests/test_pet_animation.py 用它判断画面是不是真的在动
+  window.__petLoop = () => ({
+    hidden: document.hidden,
+    driverFps: window.__petDriverFps,
+    frames: window.__petFrames,
+    err: window.__petLoopErr,
+    modelAutoUpdate: model ? model.autoUpdate : null,
+  });
+
   renderPlanBar(null);       // 先把控制条画出来（未开始状态）
   poll();
   setInterval(poll, 4000);
